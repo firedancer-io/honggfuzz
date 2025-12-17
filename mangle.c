@@ -39,6 +39,9 @@
 #include "libhfcommon/log.h"
 #include "libhfcommon/util.h"
 
+// Hooks for external metrics collection (weak symbols, defined in C++ code)
+void hf_mutation_on_execute(void) __attribute__((weak));
+
 static inline size_t mangle_LenLeft(run_t* run, size_t off) {
     if (off >= run->dynfile->size) {
         LOG_F("Offset is too large: off:%zu >= len:%zu", off, run->dynfile->size);
@@ -902,6 +905,11 @@ void mangle_mangleContent(run_t* run, int speed_factor) {
     for (uint64_t x = 0; x < changesCnt; x++) {
         uint64_t choice = util_rndGet(0, ARRAYSIZE(mangleFuncs) - 1);
         mangleFuncs[choice](run, /* printable= */ run->global->cfg.only_printable);
+        
+        // Hook: mutation executed
+        if (hf_mutation_on_execute) {
+            hf_mutation_on_execute();
+        }
     }
 
     wmb();

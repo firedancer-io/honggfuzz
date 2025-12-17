@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -48,6 +49,11 @@
 #include "report.h"
 #include "sanitizers.h"
 #include "socketfuzzer.h"
+
+// Hooks for external metrics collection (weak symbols, defined in C++ code)
+void hf_mutation_on_execute(void) __attribute__((weak));
+void hf_mutation_on_success(void) __attribute__((weak));
+void hf_corpus_on_add(size_t input_size, size_t num_features) __attribute__((weak));
 #include "subproc.h"
 
 static time_t termTimeStamp = 0;
@@ -274,6 +280,12 @@ static void fuzz_perfFeedback(run_t* run) {
         run->dynfile->cov[1] = softCurCmp;
         run->dynfile->cov[2] = run->hwCnts.cpuInstrCnt + run->hwCnts.cpuBranchCnt;
         run->dynfile->cov[3] = run->dynfile->size ? (64 - util_Log2(run->dynfile->size)) : 64;
+        
+        // Hook: mutation successful (produced new coverage)
+        if (hf_mutation_on_success) {
+            hf_mutation_on_success();
+        }
+        
         input_addDynamicInput(run);
 
         if (run->global->socketFuzzer.enabled) {
@@ -599,7 +611,28 @@ static void* fuzz_threadNew(void* arg) {
     arch_reapKill();
 
     if (run.pid) {
-        kill(run.pid, SIGKILL);
+        // First, try to gracefully terminate with SIGTERM
+        // This allows child processes to run signal handlers and log session end
+        LOG_D("Terminating pid=%d gracefully with SIGTERM", (int)run.pid);
+        kill(run.pid, SIGTERM);
+        
+            // Give the process time to exit gracefully
+            // 20 seconds should be enough for signal handlers to run and log session end (2x timeout)
+            struct timespec delay = {.tv_sec = 20, .tv_nsec = 0};
+        nanosleep(&delay, NULL);
+        
+        // Check if process is still alive (non-blocking wait)
+        int status;
+        pid_t waited = waitpid(run.pid, &status, WNOHANG);
+        if (waited == 0) {
+            // Process is still alive, force kill with SIGKILL
+            LOG_D("pid=%d did not exit after SIGTERM, forcing SIGKILL", (int)run.pid);
+            kill(run.pid, SIGKILL);
+        } else if (waited == run.pid) {
+            // Process exited gracefully
+            LOG_D("pid=%d exited gracefully after SIGTERM", (int)run.pid);
+        }
+        // If waited == -1, process was already reaped or error occurred
     }
 
     size_t j = ATOMIC_PRE_INC(run.global->threads.threadsFinished);

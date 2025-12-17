@@ -519,8 +519,9 @@ void subproc_checkTimeLimit(run_t* run) {
     int64_t curUSecs  = util_timeNowUSecs();
     int64_t diffUSecs = curUSecs - run->timeStartedUSecs;
 
-    if (run->tmOutSignaled && (diffUSecs > ((run->global->timing.tmOut + 1) * 1000000))) {
-        /* Has this instance been already signaled due to timeout? Just, SIGKILL it */
+    if (run->tmOutSignaled && (diffUSecs > ((run->global->timing.tmOut + 21) * 1000000))) {
+        /* Has this instance been already signaled due to timeout? 
+         * Give it 20 seconds after SIGTERM (2x timeout), then SIGKILL it */
         LOG_W("pid=%d has already been signaled due to timeout. Killing it with SIGKILL",
             (int)run->pid);
         kill(run->pid, SIGKILL);
@@ -529,13 +530,13 @@ void subproc_checkTimeLimit(run_t* run) {
 
     if ((diffUSecs > (run->global->timing.tmOut * 1000000)) && !run->tmOutSignaled) {
         run->tmOutSignaled = true;
-        LOG_W("pid=%d took too much time (limit %ld s). Killing it with %s", (int)run->pid,
-            (long)run->global->timing.tmOut,
-            run->global->timing.tmoutVTALRM ? "SIGVTALRM" : "SIGKILL");
+        LOG_W("pid=%d took too much time (limit %ld s). Sending SIGTERM first for graceful exit", (int)run->pid,
+            (long)run->global->timing.tmOut);
         if (run->global->timing.tmoutVTALRM) {
             kill(run->pid, SIGVTALRM);
         } else {
-            kill(run->pid, SIGKILL);
+            // Send SIGTERM first to allow graceful exit
+            kill(run->pid, SIGTERM);
         }
         ATOMIC_POST_INC(run->global->cnts.timeoutedCnt);
     }
@@ -543,8 +544,48 @@ void subproc_checkTimeLimit(run_t* run) {
 
 void subproc_checkTermination(run_t* run) {
     if (fuzz_isTerminating()) {
-        LOG_D("Killing pid=%d", (int)run->pid);
-        kill(run->pid, SIGKILL);
+        if (run->pid == 0) {
+            return;
+        }
+        // Track SIGTERM per pid using static variables (simple approach for single-threaded per-run)
+        static pid_t sigterm_pid = 0;
+        static int64_t sigterm_time = 0;
+        
+        int64_t now = util_timeNowUSecs();
+        
+        // Check if process is still alive (non-blocking wait)
+        int status;
+        pid_t waited = waitpid(run->pid, &status, WNOHANG);
+        
+        if (waited == 0) {
+            // Process is still alive
+            if (run->pid != sigterm_pid || sigterm_time == 0) {
+                // First time seeing this pid or sigterm_time not set - send SIGTERM
+                LOG_D("Terminating pid=%d gracefully with SIGTERM", (int)run->pid);
+                kill(run->pid, SIGTERM);
+                sigterm_pid = run->pid;
+                sigterm_time = now;
+            } else {
+                // Already sent SIGTERM - check if enough time has passed
+                int64_t time_since_sigterm = now - sigterm_time;
+                if (time_since_sigterm > 20000000) {  // 20 seconds in microseconds (2x timeout)
+                    // Process didn't exit after 20 seconds, force kill with SIGKILL
+                    LOG_D("pid=%d did not exit after SIGTERM (waited %ld us), forcing SIGKILL", (int)run->pid, time_since_sigterm);
+                    kill(run->pid, SIGKILL);
+                    sigterm_pid = 0;  // Reset
+                    sigterm_time = 0;
+                }
+                // Otherwise, just return and let it be checked again later
+            }
+        } else if (waited == run->pid) {
+            // Process exited gracefully
+            if (sigterm_pid == run->pid) {
+                LOG_D("pid=%d exited gracefully after SIGTERM", (int)run->pid);
+            }
+            sigterm_pid = 0;  // Reset so next process can be handled
+            sigterm_time = 0;
+        }
+        // If waited == -1, process was already reaped or error occurred
     }
 }
 

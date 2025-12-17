@@ -643,6 +643,10 @@ static uint8_t const instrumentCntMap[256] = {
     [65 ... 255] = 1U << 7,
 };
 
+// Hooks for external metrics collection
+// Declare as weak symbol so it's optional (defined by solfuzz if present)
+__attribute__((weak)) void hf_cov_trace_pc_guard_hook(uint32_t guard_idx, uintptr_t pc);
+
 HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard(uint32_t* guard_ptr) {
 #if defined(__ANDROID__)
     /*
@@ -679,6 +683,13 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard(uint32_t* guard_ptr)
     const uint32_t guard = *guard_ptr;
     if (!guard) {
         return;
+    }
+    
+    // Hook: track guard -> PC mapping for coverage collection
+    // Get the PC address using __builtin_return_address(0)
+    uintptr_t pc = (uintptr_t)__builtin_return_address(0);
+    if (hf_cov_trace_pc_guard_hook) {
+        hf_cov_trace_pc_guard_hook(guard, pc);
     }
 
     if (ATOMIC_GET(localCovFeedback->pcGuardMap[guard]) > 100) {

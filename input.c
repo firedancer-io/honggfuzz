@@ -44,6 +44,9 @@
 #include "mangle.h"
 #include "subproc.h"
 
+// Hooks for external metrics collection (weak symbols, defined in C++ code)
+void hf_corpus_on_add(size_t input_size, size_t num_features) __attribute__((weak));
+
 void input_setSize(run_t* run, size_t sz) {
     if (run->dynfile->size == sz) {
         return;
@@ -386,6 +389,14 @@ void input_addDynamicInput(run_t* run) {
     MX_SCOPED_RWLOCK_WRITE(&run->global->mutex.dynfileq);
 
     dynfile->idx = ATOMIC_PRE_INC(run->global->io.dynfileqCnt);
+
+    // Calculate total coverage features (sum of all coverage metrics)
+    size_t num_features = dynfile->cov[0] + dynfile->cov[1] + dynfile->cov[2] + dynfile->cov[3];
+    
+    // Hook: corpus addition tracked
+    if (hf_corpus_on_add) {
+        hf_corpus_on_add(dynfile->size, num_features);
+    }
 
     run->global->feedback.maxCov[0] = HF_MAX(run->global->feedback.maxCov[0], dynfile->cov[0]);
     run->global->feedback.maxCov[1] = HF_MAX(run->global->feedback.maxCov[1], dynfile->cov[1]);

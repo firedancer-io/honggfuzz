@@ -75,6 +75,8 @@
 #define MAX_INSTR_SZ 8
 #elif defined(__riscv)
 #define MAX_INSTR_SZ 4
+#elif defined(__m68k__)
+#define MAX_INSTR_SZ 22
 #endif
 
 #if defined(__i386__) || defined(__x86_64__)
@@ -349,6 +351,34 @@ union user_regs_t {
 };
 #endif /* defined(__riscv) */
 
+#if defined(__m68k__)
+struct user_regs_32 {
+    uint32_t d1;
+    uint32_t d2;
+    uint32_t d3;
+    uint32_t d4;
+    uint32_t d5;
+    uint32_t d6;
+    uint32_t d7;
+    uint32_t a0;
+    uint32_t a1;
+    uint32_t a2;
+    uint32_t a3;
+    uint32_t a4;
+    uint32_t a5;
+    uint32_t a6;
+    uint32_t d0;
+    uint32_t usp;
+    uint32_t orig_d0;
+    uint32_t sr;
+    uint32_t pc;
+};
+
+union user_regs_t {
+    struct user_regs_32 regs32;
+};
+#endif /* defined(__m68k__) */
+
 #if defined(__clang__)
 _Pragma("clang diagnostic push");
 _Pragma("clang diagnostic ignored \"-Woverride-init\"");
@@ -444,8 +474,16 @@ static size_t arch_getPC(pid_t pid, uint64_t* pc, uint64_t* status_reg HF_ATTR_U
     };
 
     if (ptrace(PTRACE_GETREGSET, pid, NT_PRSTATUS, &pt_iov) == -1L) {
+#if !defined(__m68k__)
         PLOG_D("ptrace(PTRACE_GETREGSET) failed");
         return 0;
+#else  /* !defined(__m68k__) */
+        /* m68k doesn't support GETREGSET - EIO */
+        if (ptrace(PTRACE_GETREGS, pid, NULL, &regs) == -1L) {
+            PLOG_W("ptrace(PTRACE_GETREGS) failed");
+            return 0;
+        }
+#endif /* !defined(__m68k__) */
     }
 
 #if defined(__i386__) || defined(__x86_64__)
@@ -527,6 +565,16 @@ static size_t arch_getPC(pid_t pid, uint64_t* pc, uint64_t* status_reg HF_ATTR_U
     LOG_W("Unknown registers structure size: '%zd'", pt_iov.iov_len);
     return 0;
 #endif /* defined(__riscv) */
+
+#if defined(__m68k__)
+    if (pt_iov.iov_len == sizeof(struct user_regs_32)) {
+        *pc = regs.regs32.pc;
+        return pt_iov.iov_len;
+    }
+
+    LOG_W("Unknown registers structure size: '%zd'", pt_iov.iov_len);
+    return 0;
+#endif /* defined(__m68k__) */
 
     LOG_D("Unknown/unsupported CPU architecture");
     return 0;
@@ -875,26 +923,24 @@ static void arch_traceSaveData(run_t* run, pid_t pid) {
 static void arch_traceEvent(int status, pid_t pid) {
     LOG_D("PID: %d, Ptrace event: %d", pid, __WEVENT(status));
     switch (__WEVENT(status)) {
-        case PTRACE_EVENT_EXIT: {
-            unsigned long event_msg;
-            if (ptrace(PTRACE_GETEVENTMSG, pid, NULL, &event_msg) == -1) {
-                PLOG_E("ptrace(PTRACE_GETEVENTMSG,%d) failed", pid);
-                return;
-            }
+    case PTRACE_EVENT_EXIT: {
+        unsigned long event_msg;
+        if (ptrace(PTRACE_GETEVENTMSG, pid, NULL, &event_msg) == -1) {
+            PLOG_E("ptrace(PTRACE_GETEVENTMSG,%d) failed", pid);
+            return;
+        }
 
-            if (WIFEXITED(event_msg)) {
-                LOG_D("PID: %d exited with exit_code: %lu", pid,
-                    (unsigned long)WEXITSTATUS(event_msg));
-            } else if (WIFSIGNALED(event_msg)) {
-                LOG_D(
-                    "PID: %d terminated with signal: %lu", pid, (unsigned long)WTERMSIG(event_msg));
-            } else {
-                LOG_D("PID: %d exited with unknown status: %lu (%s)", pid, event_msg,
-                    subproc_StatusToStr(event_msg));
-            }
-        } break;
-        default:
-            break;
+        if (WIFEXITED(event_msg)) {
+            LOG_D("PID: %d exited with exit_code: %lu", pid, (unsigned long)WEXITSTATUS(event_msg));
+        } else if (WIFSIGNALED(event_msg)) {
+            LOG_D("PID: %d terminated with signal: %lu", pid, (unsigned long)WTERMSIG(event_msg));
+        } else {
+            LOG_D("PID: %d exited with unknown status: %lu (%s)", pid, event_msg,
+                subproc_StatusToStr(event_msg));
+        }
+    } break;
+    default:
+        break;
     }
 
     ptrace(PTRACE_CONT, pid, 0, 0);

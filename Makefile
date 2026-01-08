@@ -59,7 +59,7 @@ ifeq ($(OS)$(findstring Microsoft,$(KERNEL)),Linux) # matches Linux but excludes
     ifeq ($(BUILD_LINUX_NO_BFD),true)
             ARCH_CFLAGS += -D_HF_LINUX_NO_BFD
     endif
-    ARCH_LDFLAGS += -lrt -ldl -lm
+    ARCH_LDFLAGS += -lrt -ldl -lm -latomic
 
     ifeq ("$(wildcard /usr/local/include/intel-pt.h)","/usr/local/include/intel-pt.h")
         ARCH_CFLAGS += -D_HF_LINUX_INTEL_PT_LIB
@@ -161,8 +161,11 @@ else
                    -Wno-unknown-warning-option -Wno-unknown-pragmas
     ARCH_LDFLAGS := -L/usr/local/lib -lm
     ifeq ($(OS),SunOS)
-        ARCH_CFLAGS += -D_POSIX_C_SOURCE=200809L -D__EXTENSIONS__=1
-	ARCH_LDFLAGS += -lkstat -lsocket -lnsl
+        ARCH_CFLAGS += -m64 -D_POSIX_C_SOURCE=200809L -D__EXTENSIONS__=1
+	ARCH_LDFLAGS += -m64 -lkstat -lsocket -lnsl -lkvm
+    endif
+    ifneq ($(OS),Linux)
+        ARCH_LDFLAGS += -latomic
     endif
     ifneq ($(REALOS),OpenBSD)
     ifneq ($(REALOS),Darwin)
@@ -209,7 +212,8 @@ LNETDRIVER_OBJS := $(LNETDRIVER_SRCS:.c=.o)
 LNETDRIVER_ARCH := libhfnetdriver/libhfnetdriver.a
 
 # Respect external user defines
-CFLAGS += $(COMMON_CFLAGS) $(ARCH_CFLAGS) -D_HF_ARCH_${ARCH}
+REALOS_UPPER = $(shell echo $(REALOS) | tr '[:lower:]' '[:upper:]')
+CFLAGS += $(COMMON_CFLAGS) $(ARCH_CFLAGS) -D_HF_ARCH_${ARCH} -D_HF_ARCH_${REALOS_UPPER}
 LDFLAGS += $(COMMON_LDFLAGS) $(ARCH_LDFLAGS)
 
 ifdef DEBUG
@@ -427,14 +431,12 @@ hfuzz_cc/hfuzz-cc.o: honggfuzz.h libhfcommon/util.h libhfcommon/common.h
 hfuzz_cc/hfuzz-cc.o: libhfcommon/files.h libhfcommon/common.h
 hfuzz_cc/hfuzz-cc.o: libhfcommon/log.h
 libhfcommon/files.o: libhfcommon/files.h libhfcommon/common.h
-libhfcommon/files.o: libhfcommon/common.h libhfcommon/log.h
-libhfcommon/files.o: libhfcommon/util.h
+libhfcommon/files.o: libhfcommon/log.h libhfcommon/util.h
 libhfcommon/log.o: libhfcommon/log.h libhfcommon/common.h libhfcommon/util.h
 libhfcommon/ns.o: libhfcommon/ns.h libhfcommon/common.h libhfcommon/files.h
-libhfcommon/ns.o: libhfcommon/common.h libhfcommon/log.h libhfcommon/util.h
+libhfcommon/ns.o: libhfcommon/log.h libhfcommon/util.h
 libhfcommon/util.o: libhfcommon/util.h libhfcommon/common.h
-libhfcommon/util.o: libhfcommon/files.h libhfcommon/common.h
-libhfcommon/util.o: libhfcommon/log.h
+libhfcommon/util.o: libhfcommon/files.h libhfcommon/log.h
 libhfnetdriver/netdriver.o: libhfnetdriver/netdriver.h honggfuzz.h
 libhfnetdriver/netdriver.o: libhfcommon/util.h libhfcommon/common.h
 libhfnetdriver/netdriver.o: libhfcommon/files.h libhfcommon/common.h

@@ -221,12 +221,19 @@ static inline size_t HF_strlcpy(char* dest, const char* src, size_t sz, uintptr_
     }
 
     dest[len] = '\0';
-    return len;
+    return slen;
 }
 
 static inline size_t HF_strlcat(char* dest, const char* src, size_t sz, uintptr_t addr) {
-    size_t len = __builtin_strlen(dest);
-    return HF_strlcpy(dest + len, src, sz, addr);
+    size_t dstlen = __builtin_strlen(dest);
+
+    if (dstlen >= sz) {
+        return dstlen + __builtin_strlen(src);
+    }
+
+    size_t left = sz - dstlen;
+
+    return dstlen + HF_strlcpy(dest + dstlen, src, left, addr);
 }
 
 /* Define a weak function x, as well as __wrap_x pointing to x */
@@ -656,6 +663,18 @@ HF_WEAK_WRAP(int, curl_strnequal, const char* first, const char* second, size_t 
         return 1;
     }
     return 0;
+}
+
+/* SQLite3 wrappers */
+HF_WEAK_WRAP(int, sqlite3_stricmp, const char* s1, const char* s2) {
+    return HF_strcasecmp(s1, s2, tolower, (uintptr_t)__builtin_return_address(0));
+}
+HF_WEAK_WRAP(int, sqlite3StrICmp, const char* s1, const char* s2) {
+    return HF_strcasecmp(s1, s2, tolower, (uintptr_t)__builtin_return_address(0));
+}
+HF_WEAK_WRAP(int, sqlite3_strnicmp, const char* s1, const char* s2, size_t len) {
+    return HF_strncasecmp(
+        s1, s2, len, tolower, /* constfb= */ true, (uintptr_t)__builtin_return_address(0));
 }
 
 /* C++ wrappers */

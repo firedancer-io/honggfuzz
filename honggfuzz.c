@@ -265,10 +265,12 @@ static uint8_t mainThreadLoop(honggfuzz_t* hfuzz) {
     setupSignalsMainThread();
     setupMainThreadTimer();
 
+    uint64_t dynamicQueuePollTime = time(NULL);
     for (;;) {
-        if (hfuzz->io.dynamicInputDir) {
+        if (hfuzz->io.dynamicInputDir && time(NULL) - dynamicQueuePollTime > _HF_SYNC_TIME) {
             LOG_D("Loading files from the dynamic input queue...");
             input_enqueueDynamicInputs(hfuzz);
+            dynamicQueuePollTime = time(NULL);
         }
 
         if (hfuzz->display.useScreen) {
@@ -291,8 +293,8 @@ static uint8_t mainThreadLoop(honggfuzz_t* hfuzz) {
         }
         if (hfuzz->timing.exitOnTime > 0 &&
             time(NULL) - ATOMIC_GET(hfuzz->timing.lastCovUpdate) > hfuzz->timing.exitOnTime) {
-            LOG_I("No new coverage was found for the last %ld seconds, terminating",
-                hfuzz->timing.exitOnTime);
+            LOG_I("No new coverage was found for the last %" PRIu64 " seconds, terminating",
+                (uint64_t)hfuzz->timing.exitOnTime);
             break;
         }
         pingThreads(hfuzz);
@@ -424,8 +426,9 @@ int main(int argc, char** argv) {
         if (hfuzz.io.statsFileFd == -1) {
             PLOG_F("Couldn't open statsfile open('%s')", hfuzz.io.statsFileName);
         } else {
-            dprintf(hfuzz.io.statsFileFd, "# unix_time, last_cov_update, total_exec, exec_per_sec, "
-                                          "crashes, unique_crashes, hangs, edge_cov, block_cov\n");
+            dprintf(hfuzz.io.statsFileFd,
+                "# unix_time, last_cov_update, total_exec, exec_per_sec, "
+                "crashes, unique_crashes, hangs, edge_cov, block_cov, corpus_count\n");
         }
     }
 

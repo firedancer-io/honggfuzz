@@ -241,8 +241,12 @@ static void mangle_Bit(run_t* run, bool printable) {
 }
 
 static const struct {
+#if __has_attribute(nonstring)
+    const uint8_t val[8] __attribute__((nonstring));
+#else
     const uint8_t val[8];
-    const size_t  size;
+#endif /* __has_attribute(nonstring) */
+    const size_t size;
 } mangleMagicVals[] = {
     /* 1B - No endianness */
     {"\x00\x00\x00\x00\x00\x00\x00\x00", 1},
@@ -566,55 +570,55 @@ static inline void mangle_AddSubWithRange(
     int64_t delta = (int64_t)util_rndGet(0, range * 2) - (int64_t)range;
 
     switch (varLen) {
-        case 1: {
-            run->dynfile->data[off] += delta;
-            break;
+    case 1: {
+        run->dynfile->data[off] += delta;
+        break;
+    }
+    case 2: {
+        int16_t val;
+        util_memcpyInline(&val, &run->dynfile->data[off], sizeof(val));
+        if (util_rnd64() & 0x1) {
+            val += delta;
+        } else {
+            /* Foreign endianess */
+            val = __builtin_bswap16(val);
+            val += delta;
+            val = __builtin_bswap16(val);
         }
-        case 2: {
-            int16_t val;
-            util_memcpyInline(&val, &run->dynfile->data[off], sizeof(val));
-            if (util_rnd64() & 0x1) {
-                val += delta;
-            } else {
-                /* Foreign endianess */
-                val = __builtin_bswap16(val);
-                val += delta;
-                val = __builtin_bswap16(val);
-            }
-            mangle_Overwrite(run, off, (uint8_t*)&val, varLen, printable);
-            break;
+        mangle_Overwrite(run, off, (uint8_t*)&val, varLen, printable);
+        break;
+    }
+    case 4: {
+        int32_t val;
+        util_memcpyInline(&val, &run->dynfile->data[off], sizeof(val));
+        if (util_rnd64() & 0x1) {
+            val += delta;
+        } else {
+            /* Foreign endianess */
+            val = __builtin_bswap32(val);
+            val += delta;
+            val = __builtin_bswap32(val);
         }
-        case 4: {
-            int32_t val;
-            util_memcpyInline(&val, &run->dynfile->data[off], sizeof(val));
-            if (util_rnd64() & 0x1) {
-                val += delta;
-            } else {
-                /* Foreign endianess */
-                val = __builtin_bswap32(val);
-                val += delta;
-                val = __builtin_bswap32(val);
-            }
-            mangle_Overwrite(run, off, (uint8_t*)&val, varLen, printable);
-            break;
+        mangle_Overwrite(run, off, (uint8_t*)&val, varLen, printable);
+        break;
+    }
+    case 8: {
+        int64_t val;
+        util_memcpyInline(&val, &run->dynfile->data[off], sizeof(val));
+        if (util_rnd64() & 0x1) {
+            val += delta;
+        } else {
+            /* Foreign endianess */
+            val = __builtin_bswap64(val);
+            val += delta;
+            val = __builtin_bswap64(val);
         }
-        case 8: {
-            int64_t val;
-            util_memcpyInline(&val, &run->dynfile->data[off], sizeof(val));
-            if (util_rnd64() & 0x1) {
-                val += delta;
-            } else {
-                /* Foreign endianess */
-                val = __builtin_bswap64(val);
-                val += delta;
-                val = __builtin_bswap64(val);
-            }
-            mangle_Overwrite(run, off, (uint8_t*)&val, varLen, printable);
-            break;
-        }
-        default: {
-            LOG_F("Unknown variable length size: %zu", varLen);
-        }
+        mangle_Overwrite(run, off, (uint8_t*)&val, varLen, printable);
+        break;
+    }
+    default: {
+        LOG_F("Unknown variable length size: %zu", varLen);
+    }
     }
 }
 
@@ -629,20 +633,20 @@ static void mangle_AddSub(run_t* run, bool printable) {
 
     uint64_t range;
     switch (varLen) {
-        case 1:
-            range = 16;
-            break;
-        case 2:
-            range = 4096;
-            break;
-        case 4:
-            range = 1048576;
-            break;
-        case 8:
-            range = 268435456;
-            break;
-        default:
-            LOG_F("Invalid operand size: %zu", varLen);
+    case 1:
+        range = 16;
+        break;
+    case 2:
+        range = 4096;
+        break;
+    case 4:
+        range = 1048576;
+        break;
+    case 8:
+        range = 268435456;
+        break;
+    default:
+        LOG_F("Invalid operand size: %zu", varLen);
     }
 
     mangle_AddSubWithRange(run, off, varLen, range, printable);
@@ -745,32 +749,32 @@ static void mangle_ASCIINumChange(run_t* run, bool printable) {
     }
 
     switch (util_rndGet(0, 7)) {
-        case 0:
-            val++;
-            break;
-        case 1:
-            val--;
-            break;
-        case 2:
-            val *= 2;
-            break;
-        case 3:
-            val /= 2;
-            break;
-        case 4:
-            val = util_rnd64();
-            break;
-        case 5:
-            val += util_rndGet(1, 256);
-            break;
-        case 6:
-            val -= util_rndGet(1, 256);
-            break;
-        case 7:
-            val = ~(val);
-            break;
-        default:
-            LOG_F("Invalid choice");
+    case 0:
+        val++;
+        break;
+    case 1:
+        val--;
+        break;
+    case 2:
+        val *= 2;
+        break;
+    case 3:
+        val /= 2;
+        break;
+    case 4:
+        val = util_rnd64();
+        break;
+    case 5:
+        val += util_rndGet(1, 256);
+        break;
+    case 6:
+        val -= util_rndGet(1, 256);
+        break;
+    case 7:
+        val = ~(val);
+        break;
+    default:
+        LOG_F("Invalid choice");
     };
 
     char buf[20];
@@ -808,27 +812,27 @@ static void mangle_Resize(run_t* run, bool printable) {
 
     uint64_t choice = util_rndGet(0, 32);
     switch (choice) {
-        case 0: /* Set new size arbitrarily */
-            newsz = (ssize_t)util_rndGet(1, run->global->mutate.maxInputSz);
-            break;
-        case 1 ... 4: /* Increase size by a small value */
-            newsz = oldsz + (ssize_t)util_rndGet(0, 8);
-            break;
-        case 5: /* Increase size by a larger value */
-            newsz = oldsz + (ssize_t)util_rndGet(9, 128);
-            break;
-        case 6 ... 9: /* Decrease size by a small value */
-            newsz = oldsz - (ssize_t)util_rndGet(0, 8);
-            break;
-        case 10: /* Decrease size by a larger value */
-            newsz = oldsz - (ssize_t)util_rndGet(9, 128);
-            break;
-        case 11 ... 32: /* Do nothing */
-            newsz = oldsz;
-            break;
-        default:
-            LOG_F("Illegal value from util_rndGet: %" PRIu64, choice);
-            break;
+    case 0: /* Set new size arbitrarily */
+        newsz = (ssize_t)util_rndGet(1, run->global->mutate.maxInputSz);
+        break;
+    case 1 ... 4: /* Increase size by a small value */
+        newsz = oldsz + (ssize_t)util_rndGet(0, 8);
+        break;
+    case 5: /* Increase size by a larger value */
+        newsz = oldsz + (ssize_t)util_rndGet(9, 128);
+        break;
+    case 6 ... 9: /* Decrease size by a small value */
+        newsz = oldsz - (ssize_t)util_rndGet(0, 8);
+        break;
+    case 10: /* Decrease size by a larger value */
+        newsz = oldsz - (ssize_t)util_rndGet(9, 128);
+        break;
+    case 11 ... 32: /* Do nothing */
+        newsz = oldsz;
+        break;
+    default:
+        LOG_F("Illegal value from util_rndGet: %" PRIu64, choice);
+        break;
     }
     if (newsz < 1) {
         newsz = 1;
@@ -845,7 +849,7 @@ static void mangle_Resize(run_t* run, bool printable) {
     }
 }
 
-void mangle_mangleContent(run_t* run, int speed_factor) {
+void mangle_mangleContent(run_t* run) {
     static void (*const mangleFuncs[])(run_t* run, bool printable) = {
         mangle_Shrink,
         mangle_Expand,
@@ -876,16 +880,7 @@ void mangle_mangleContent(run_t* run, int speed_factor) {
         mangle_Resize(run, /* printable= */ run->global->cfg.only_printable);
     }
 
-    uint64_t changesCnt = run->global->mutate.mutationsPerRun;
-
-    if (speed_factor < 5) {
-        changesCnt = util_rndGet(1, run->global->mutate.mutationsPerRun);
-    } else if (speed_factor < 10) {
-        changesCnt = run->global->mutate.mutationsPerRun;
-    } else {
-        changesCnt = HF_MIN(speed_factor, 10);
-        changesCnt = HF_MAX(changesCnt, (run->global->mutate.mutationsPerRun * 5));
-    }
+    const uint64_t changesCnt = util_rndGet(1, run->global->mutate.mutationsPerRun);
 
     /* If last coverage acquisition was more than 5 secs ago, use splicing more frequently */
     if ((time(NULL) - ATOMIC_GET(run->global->timing.lastCovUpdate)) > 5) {
@@ -894,18 +889,18 @@ void mangle_mangleContent(run_t* run, int speed_factor) {
         }
     }
 
-    /*
-     * mangle_ConstFeedbackDict() is quite powerful if the dynamic feedback dictionary
-     * exists. If so, give it a 50% chance of being used.
-     */
-    if (run->global->feedback.cmpFeedback && (util_rnd64() & 0x1)) {
-        mangle_ConstFeedbackDict(run, /* printable= */ run->global->cfg.only_printable);
-    }
-
     for (uint64_t x = 0; x < changesCnt; x++) {
-        uint64_t choice = util_rndGet(0, ARRAYSIZE(mangleFuncs) - 1);
-        mangleFuncs[choice](run, /* printable= */ run->global->cfg.only_printable);
-        
+        if (run->global->feedback.cmpFeedback && (util_rnd64() & 0x1)) {
+            /*
+             * mangle_ConstFeedbackDict() is quite powerful if the dynamic feedback dictionary
+             * exists. If so, give it 50% chance of being used among all mangling functions.
+             */
+            mangle_ConstFeedbackDict(run, /* printable= */ run->global->cfg.only_printable);
+        } else {
+            uint64_t choice = util_rndGet(0, ARRAYSIZE(mangleFuncs) - 1);
+            mangleFuncs[choice](run, /* printable= */ run->global->cfg.only_printable);
+        }
+
         // Hook: mutation executed
         if (hf_mutation_on_execute) {
             hf_mutation_on_execute();

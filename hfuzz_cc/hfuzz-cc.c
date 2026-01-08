@@ -127,6 +127,34 @@ static bool isLDMode(int argc, char** argv) {
     return true;
 }
 
+static bool isExecutableBuild(int argc, char** argv) {
+    bool  shared_flag     = false;
+    char* output_filename = NULL;
+
+    for (int i = 0; i < argc; i++) {
+        // Check for Linux shared or macOS dynamic library flags.
+        if (strcmp(argv[i], "-shared") == 0 || strcmp(argv[i], "--shared") == 0 ||
+            strcmp(argv[i], "-dynamiclib") == 0) {
+            shared_flag = true;
+        } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            output_filename = argv[i + 1];
+        }
+    }
+
+    if (shared_flag) {
+        return false;
+    }
+
+    if (output_filename != NULL) {
+        const char* ext = strrchr(output_filename, '.');
+        if (ext != NULL && (strcmp(ext, ".so") == 0 || strcmp(ext, ".dylib") == 0)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static bool hasFSanitizeFuzzer(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         if (util_strStartsWith(argv[i], "-fsanitize=") && strstr(argv[i], "fuzzer")) {
@@ -181,6 +209,18 @@ static int execCC(int argc, char** argv) {
         if (isCXX) {
             /* Try the default one, then the newest ones (hopefully) in order */
             hf_execvp("clang++", argv);
+            hf_execvp("clang++-22.0", argv);
+            hf_execvp("clang++-22", argv);
+            hf_execvp("clang++-21.0", argv);
+            hf_execvp("clang++-21", argv);
+            hf_execvp("clang++-20.0", argv);
+            hf_execvp("clang++-20", argv);
+            hf_execvp("clang++-19.0", argv);
+            hf_execvp("clang++-19", argv);
+            hf_execvp("clang++-18.0", argv);
+            hf_execvp("clang++-18", argv);
+            hf_execvp("clang++-17.0", argv);
+            hf_execvp("clang++-17", argv);
             hf_execvp("clang++-16.0", argv);
             hf_execvp("clang++-16", argv);
             hf_execvp("clang++-15.0", argv);
@@ -208,9 +248,22 @@ static int execCC(int argc, char** argv) {
             hf_execvp("clang++-7", argv);
             hf_execvp("clang++7", argv);
             hf_execvp("clang", argv);
+            hf_execvp("clang++", argv);
         } else {
             /* Try the default one, then the newest ones (hopefully) in order */
             hf_execvp("clang", argv);
+            hf_execvp("clang-22.0", argv);
+            hf_execvp("clang-22", argv);
+            hf_execvp("clang-21.0", argv);
+            hf_execvp("clang-21", argv);
+            hf_execvp("clang-20.0", argv);
+            hf_execvp("clang-20", argv);
+            hf_execvp("clang-19.0", argv);
+            hf_execvp("clang-19", argv);
+            hf_execvp("clang-18.0", argv);
+            hf_execvp("clang-18", argv);
+            hf_execvp("clang-17.0", argv);
+            hf_execvp("clang-17", argv);
             hf_execvp("clang-16.0", argv);
             hf_execvp("clang-16", argv);
             hf_execvp("clang-15.0", argv);
@@ -237,6 +290,7 @@ static int execCC(int argc, char** argv) {
             hf_execvp("clang-7.0", argv);
             hf_execvp("clang-7", argv);
             hf_execvp("clang7", argv);
+            hf_execvp("clang", argv);
         }
     }
 
@@ -361,6 +415,7 @@ static void commonPreOpts(int* j, char** args) {
         args[(*j)++] = "-mllvm";
         args[(*j)++] = "-inline-threshold=1000";
     }
+
     args[(*j)++] = "-fno-builtin";
     args[(*j)++] = "-fno-omit-frame-pointer";
     args[(*j)++] = "-D__NO_STRING_INLINES";
@@ -496,6 +551,10 @@ static int ldMode(int argc, char** argv) {
     args[j++] = "-Wl,--wrap=Curl_safe_strcasecompare";
     args[j++] = "-Wl,--wrap=Curl_strncasecompare";
     args[j++] = "-Wl,--wrap=curl_strnequal";
+    /* SQLite3 */
+    args[j++] = "-Wl,--wrap=sqlite3_stricmp";
+    args[j++] = "-Wl,--wrap=sqlite3_strnicmp";
+    args[j++] = "-Wl,--wrap=sqlite3StrICmp";
 #endif /* _HF_ARCH_DARWIN */
 
     /* Pull modules defining the following symbols (if they exist) */
@@ -521,7 +580,24 @@ static int ldMode(int argc, char** argv) {
 
     /* Reference standard honggfuzz libraries first (libhfuzz, libhfcommon and libhfnetdriver) */
     args[j++] = getLibHFNetDriverPath();
+
+    /* Ensure to link libhfuzz to the fuzz test executable*/
+    if (isExecutableBuild(argc, argv)) {
+#if defined(_HF_ARCH_DARWIN)
+        args[j++] = "-Wl,-force_load";
+#else
+        args[j++] = "-Wl,--whole-archive";
+#endif
+    }
+
     args[j++] = getLibHFuzzPath();
+
+#if !defined(_HF_ARCH_DARWIN)
+    if (isExecutableBuild(argc, argv)) {
+        args[j++] = "-Wl,--no-whole-archive";
+    }
+#endif /* !defined(_HF_ARCH_DARWIN) */
+
     args[j++] = getLibHFCommonPath();
 
     /* Needed by libhfcommon */
@@ -532,7 +608,7 @@ static int ldMode(int argc, char** argv) {
 #if !defined(_HF_ARCH_DARWIN) && !defined(__OpenBSD__)
     args[j++] = "-lrt";
 #endif /* !defined(_HF_ARCH_DARWIN) && !defined(__OpenBSD__) */
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(__m68k__)
     args[j++] = "-latomic";
 #endif
 

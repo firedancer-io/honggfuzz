@@ -132,6 +132,8 @@ static void fuzz_setDynamicMainState(run_t* run) {
             .fd            = -1,
             .timeExecUSecs = 1,
             .path          = "[DYNAMIC-0-SIZE]",
+            .timedout      = false,
+            .imported      = false,
             .data          = (uint8_t*)"",
         };
         dynfile_t* tmp_dynfile = run->dynfile;
@@ -167,11 +169,12 @@ static void fuzz_minimizeRemoveFiles(run_t* run) {
         return;
     }
     for (;;) {
-        char fname[PATH_MAX];
-        if (!input_getNext(run, fname, /* rewind= */ false)) {
+        char   fname[PATH_MAX];
+        size_t len;
+        if (!input_getNext(run, fname, &len, /* rewind= */ false)) {
             break;
         }
-        if (!input_inDynamicCorpus(run, fname)) {
+        if (!input_inDynamicCorpus(run, fname, len)) {
             if (input_removeStaticFile(run->global->io.inputDir, fname)) {
                 LOG_I("Removed unnecessary '%s'", fname);
             }
@@ -242,7 +245,8 @@ static void fuzz_perfFeedback(run_t* run) {
             run->dynfile->size, util_timeNowUSecs() - run->timeStartedUSecs,
             run->hwCnts.cpuInstrCnt, run->hwCnts.cpuBranchCnt, run->hwCnts.newBBCnt, softNewEdge,
             softNewPC, softNewCmp, run->hwCnts.cpuInstrCnt, run->hwCnts.cpuBranchCnt,
-            run->hwCnts.bbCnt, softCurEdge, softCurPC, softCurCmp);
+            run->global->feedback.hwCnts.bbCnt, run->global->feedback.hwCnts.softCntEdge,
+            run->global->feedback.hwCnts.softCntPc, run->global->feedback.hwCnts.softCntCmp);
 
         if (run->global->io.statsFileName) {
             const time_t curr_sec      = time(NULL);
@@ -261,17 +265,17 @@ static void fuzz_perfFeedback(run_t* run) {
             size_t tot_exec_per_sec = elapsed_sec ? (curr_exec_cnt / elapsed_sec) : 0;
 
             dprintf(run->global->io.statsFileFd,
-                "%lu, %lu, %lu, %lu, "
-                "%" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 "\n",
-                curr_sec,                                 /* unix_time */
-                run->global->timing.lastCovUpdate,        /* last_cov_update */
-                curr_exec_cnt,                            /* total_exec */
-                tot_exec_per_sec,                         /* exec_per_sec */
-                run->global->cnts.crashesCnt,             /* crashes */
-                run->global->cnts.uniqueCrashesCnt,       /* unique_crashes */
-                run->global->cnts.timeoutedCnt,           /* hangs */
-                run->global->feedback.hwCnts.softCntEdge, /* edge_cov */
-                run->global->feedback.hwCnts.softCntPc    /* block_cov */
+                "%lu, %lu, %zu, %zu, %zu, %zu, %zu, %" PRIu64 ", %" PRIu64 ", %zu\n",
+                (unsigned long)curr_sec,                          /* unix_time */
+                (unsigned long)run->global->timing.lastCovUpdate, /* last_cov_update */
+                curr_exec_cnt,                                    /* total_exec */
+                tot_exec_per_sec,                                 /* exec_per_sec */
+                run->global->cnts.crashesCnt,                     /* crashes */
+                run->global->cnts.uniqueCrashesCnt,               /* unique_crashes */
+                run->global->cnts.timeoutedCnt,                   /* hangs */
+                run->global->feedback.hwCnts.softCntEdge,         /* edge_cov */
+                run->global->feedback.hwCnts.softCntPc,           /* block_cov */
+                run->global->io.dynfileqCnt                       /* corpus_count */
             );
         }
 
@@ -286,12 +290,25 @@ static void fuzz_perfFeedback(run_t* run) {
             hf_mutation_on_success();
         }
         
+        /* Push useful imported input to dynamic queue again for the further mutations */
+        if (run->dynfile->imported) {
+            LOG_I("File imported: %s", run->dynfile->path);
+            run->dynfile->imported = false;
+        }
         input_addDynamicInput(run);
 
         if (run->global->socketFuzzer.enabled) {
             LOG_D("SocketFuzzer: fuzz: new BB (perf)");
             fuzz_notifySocketFuzzerNewCov(run->global);
         }
+    } else if (run->dynfile->imported) {
+        /* Remove useless imported inputs from corpus */
+        LOG_D("Removing useless imported file: %s", run->dynfile->path);
+        char fname[PATH_MAX];
+        snprintf(fname, PATH_MAX, "%s/%s",
+            run->global->io.outputDir ? run->global->io.outputDir : run->global->io.inputDir,
+            run->dynfile->path);
+        unlink(fname);
     }
 }
 
@@ -369,7 +386,7 @@ static bool fuzz_fetchInput(run_t* run) {
         fuzzState_t st = fuzz_getState(run->global);
         if (st == _HF_STATE_DYNAMIC_DRY_RUN) {
             run->mutationsPerRun = 0U;
-            if (input_prepareStaticFile(run, /* rewind= */ false, true)) {
+            if (input_prepareStaticFile(run, /* rewind= */ false, /* mangle= */ false)) {
                 return true;
             }
             fuzz_setDynamicMainState(run);
@@ -406,11 +423,11 @@ static bool fuzz_fetchInput(run_t* run) {
                 return false;
             }
         } else if (run->global->exe.feedbackMutateCommand) {
-            if (!input_prepareStaticFile(run, true, false)) {
+            if (!input_prepareStaticFile(run, /* rewind= */ true, /* mangle= */ false)) {
                 LOG_E("input_prepareStaticFile() failed");
                 return false;
             }
-        } else if (!input_prepareStaticFile(run, true /* rewind */, true)) {
+        } else if (!input_prepareStaticFile(run, /* rewind= */ true, /* mangle= */ true)) {
             LOG_E("input_prepareStaticFile() failed");
             return false;
         }

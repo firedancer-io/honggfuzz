@@ -21,7 +21,7 @@
  *
  */
 
-#include "libhfcommon/util.h"
+#include "util.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -35,11 +35,12 @@
 #include <pthread.h>
 #if defined(_HF_ARCH_LINUX)
 #include <sched.h>
+#include <sys/syscall.h>
 #endif /* defined(_HF_ARCH_LINUX) */
 #if defined(__FreeBSD__)
 #include <pthread_np.h>
 #include <sys/cpuset.h>
-#endif /* defined(__FreebSD__) */
+#endif /* defined(__FreeBSD__) */
 #if defined(_HF_ARCH_NETBSD)
 #include <sched.h>
 #endif /* defined(_HF_ARCH_NETBSD) */
@@ -69,9 +70,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "libhfcommon/common.h"
-#include "libhfcommon/files.h"
-#include "libhfcommon/log.h"
+#include "common.h"
+#include "files.h"
+#include "log.h"
 
 void util_ParentDeathSigIfAvail(int signo HF_ATTR_UNUSED) {
 #if defined(__FreeBSD__)
@@ -223,11 +224,16 @@ char* util_StrDup(const char* s) {
     return ret;
 }
 
-static __thread pthread_once_t rndThreadOnce = PTHREAD_ONCE_INIT;
-static __thread uint64_t       rndState[2];
+static __thread bool     rndThreadOnce = false;
+static __thread uint64_t rndState[4];
 
 static void util_rndInitThread(void) {
-#if !defined(BSD)
+    __attribute__((weak)) void arc4random_buf(void* buf, size_t nbytes);
+    if (arc4random_buf) {
+        arc4random_buf((void*)rndState, sizeof(rndState));
+        return;
+    }
+
     int fd = TEMP_FAILURE_RETRY(open("/dev/urandom", O_RDONLY | O_CLOEXEC));
     if (fd == -1) {
         PLOG_F("Couldn't open /dev/urandom for reading");
@@ -236,31 +242,34 @@ static void util_rndInitThread(void) {
         PLOG_F("Couldn't read '%zu' bytes from /dev/urandom", sizeof(rndState));
     }
     close(fd);
-#else
-    arc4random_buf((void*)rndState, sizeof(rndState));
-#endif
 }
 
-/*
- * xoroshiro128plus by David Blackman and Sebastiano Vigna
- */
 static inline uint64_t __attribute__((const)) util_RotL(const uint64_t x, int k) {
     return (x << k) | (x >> (64 - k));
 }
 
+/*
+ * xoroshiro256++ by David Blackman and Sebastiano Vigna
+ */
 static inline uint64_t util_InternalRnd64(void) {
-    const uint64_t s0     = rndState[0];
-    uint64_t       s1     = rndState[1];
-    const uint64_t result = s0 + s1;
-    s1 ^= s0;
-    rndState[0] = util_RotL(s0, 55) ^ s1 ^ (s1 << 14);
-    rndState[1] = util_RotL(s1, 36);
+    if (!rndThreadOnce) {
+        rndThreadOnce = true;
+        util_rndInitThread();
+    }
+    const uint64_t result = util_RotL(rndState[0] + rndState[3], 23) + rndState[0];
+
+    const uint64_t t = rndState[1] << 17;
+    rndState[2] ^= rndState[0];
+    rndState[3] ^= rndState[1];
+    rndState[1] ^= rndState[2];
+    rndState[0] ^= rndState[3];
+    rndState[2] ^= t;
+    rndState[3] = util_RotL(rndState[3], 45);
 
     return result;
 }
 
 uint64_t util_rnd64(void) {
-    pthread_once(&rndThreadOnce, util_rndInitThread);
     return util_InternalRnd64();
 }
 
@@ -295,7 +304,6 @@ void util_rndBufPrintable(uint8_t* buf, size_t sz) {
 }
 
 void util_rndBuf(uint8_t* buf, size_t sz) {
-    pthread_once(&rndThreadOnce, util_rndInitThread);
     if (sz == 0) {
         return;
     }
@@ -477,47 +485,47 @@ size_t util_decodeCString(char* s) {
     size_t o = 0;
     for (size_t i = 0; s[i] != '\0' && s[i] != '"'; i++, o++) {
         switch (s[i]) {
-            case '\\': {
-                i++;
-                if (!s[i]) {
-                    continue;
-                }
-                switch (s[i]) {
-                    case 'a':
-                        s[o] = '\a';
-                        break;
-                    case 'r':
-                        s[o] = '\r';
-                        break;
-                    case 'n':
-                        s[o] = '\n';
-                        break;
-                    case 't':
-                        s[o] = '\t';
-                        break;
-                    case '0':
-                        s[o] = '\0';
-                        break;
-                    case 'x': {
-                        if (s[i + 1] && s[i + 2]) {
-                            char hex[] = {s[i + 1], s[i + 2], 0};
-                            s[o]       = strtoul(hex, NULL, 16);
-                            i += 2;
-                        } else {
-                            s[o] = s[i];
-                        }
-                        break;
-                    }
-                    default:
-                        s[o] = s[i];
-                        break;
+        case '\\': {
+            i++;
+            if (!s[i]) {
+                continue;
+            }
+            switch (s[i]) {
+            case 'a':
+                s[o] = '\a';
+                break;
+            case 'r':
+                s[o] = '\r';
+                break;
+            case 'n':
+                s[o] = '\n';
+                break;
+            case 't':
+                s[o] = '\t';
+                break;
+            case '0':
+                s[o] = '\0';
+                break;
+            case 'x': {
+                if (s[i + 1] && s[i + 2]) {
+                    char hex[] = {s[i + 1], s[i + 2], 0};
+                    s[o]       = strtoul(hex, NULL, 16);
+                    i += 2;
+                } else {
+                    s[o] = s[i];
                 }
                 break;
             }
-            default: {
+            default:
                 s[o] = s[i];
                 break;
             }
+            break;
+        }
+        default: {
+            s[o] = s[i];
+            break;
+        }
         }
     }
     s[o] = '\0';

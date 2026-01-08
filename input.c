@@ -126,7 +126,7 @@ bool input_getDirStatsAndRewind(honggfuzz_t* hfuzz) {
     return true;
 }
 
-bool input_getNext(run_t* run, char fname[PATH_MAX], bool rewind) {
+bool input_getNext(run_t* run, char fname[PATH_MAX], size_t* len, bool rewind) {
     MX_SCOPED_LOCK(&run->global->mutex.input);
 
     if (run->global->io.fileCnt == 0U) {
@@ -164,6 +164,7 @@ bool input_getNext(run_t* run, char fname[PATH_MAX], bool rewind) {
         }
 
         snprintf(fname, PATH_MAX, "%s", entry->d_name);
+        *len = st.st_size;
         return true;
     }
 }
@@ -379,11 +380,13 @@ void input_addDynamicInput(run_t* run) {
     dynfile->timeExecUSecs = util_timeNowUSecs() - run->timeStartedUSecs;
     dynfile->data          = (uint8_t*)util_AllocCopy(run->dynfile->data, run->dynfile->size);
     dynfile->src           = run->dynfile->src;
+    dynfile->imported      = run->dynfile->imported,
     memcpy(dynfile->cov, run->dynfile->cov, sizeof(dynfile->cov));
     if (run->dynfile->src) {
         ATOMIC_POST_INC(run->dynfile->src->refs);
     }
-    dynfile->phase = fuzz_getState(run->global);
+    dynfile->phase    = fuzz_getState(run->global);
+    dynfile->timedout = run->tmOutSignaled;
     input_generateFileName(dynfile, NULL, dynfile->path);
 
     MX_SCOPED_RWLOCK_WRITE(&run->global->mutex.dynfileq);
@@ -440,12 +443,12 @@ void input_addDynamicInput(run_t* run) {
     }
 }
 
-bool input_inDynamicCorpus(run_t* run, const char* fname) {
+bool input_inDynamicCorpus(run_t* run, const char* fname, size_t len) {
     MX_SCOPED_RWLOCK_WRITE(&run->global->mutex.dynfileq);
 
     dynfile_t* iter = NULL;
     TAILQ_FOREACH_HF (iter, &run->global->io.dynfileq, pointers) {
-        if (strncmp(iter->path, fname, PATH_MAX) == 0) {
+        if (strncmp(iter->path, fname, PATH_MAX) == 0 && iter->size == len) {
             return true;
         }
     }
@@ -470,17 +473,20 @@ static inline int input_speedFactor(run_t* run, dynfile_t* dynfile) {
     }
 }
 
-static inline int input_skipFactor(run_t* run, dynfile_t* dynfile, int* speed_factor) {
+static inline int input_skipFactor(run_t* run, dynfile_t* dynfile) {
     int penalty = 0;
 
 #if 1
-    {
-        *speed_factor = HF_CAP(input_speedFactor(run, dynfile), -10, 5);
-        penalty += *speed_factor;
+    if (dynfile->timedout) {
+        penalty += 50;
     }
 #endif
 
-#if 0
+#if 1
+    penalty -= HF_CAP(input_speedFactor(run, dynfile), -10, 10);
+#endif
+
+#if 1
     {
         /* Inputs with lower total coverage -> lower chance of being tested */
         static const int scaleMap[200] = {
@@ -542,7 +548,6 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         LOG_F("The dynamic file corpus is empty. This shouldn't happen");
     }
 
-    int speed_factor = 0;
     for (;;) {
         MX_SCOPED_RWLOCK_WRITE(&run->global->mutex.dynfileq);
 
@@ -558,7 +563,13 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         run->current                    = run->global->io.dynfileqCurrent;
         run->global->io.dynfileqCurrent = TAILQ_NEXT(run->global->io.dynfileqCurrent, pointers);
 
-        int skip_factor = input_skipFactor(run, run->current, &speed_factor);
+        /* Do not count skip_factor on unmeasured (imported) inputs */
+        if (run->current->imported) {
+            break;
+        }
+
+        int skip_factor = input_skipFactor(run, run->current);
+
         if (skip_factor <= 0) {
             run->triesLeft = -(skip_factor);
             break;
@@ -575,12 +586,24 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
     run->dynfile->src           = run->current;
     run->dynfile->refs          = 0;
     run->dynfile->phase         = fuzz_getState(run->global);
+    run->dynfile->timedout      = run->current->timedout;
+    run->dynfile->imported      = run->current->imported;
     memcpy(run->dynfile->cov, run->current->cov, sizeof(run->dynfile->cov));
     snprintf(run->dynfile->path, sizeof(run->dynfile->path), "%s", run->current->path);
     memcpy(run->dynfile->data, run->current->data, run->current->size);
 
+    /* Run unmangled imported input to measure coverage. It would be added
+       to dynamic queue again in case of profit.
+    */
+    if (run->current->imported) {
+        TAILQ_REMOVE(&run->global->io.dynfileq, run->current, pointers);
+        ATOMIC_POST_DEC(run->global->io.newUnitsAdded);
+        run->triesLeft = 0;
+        return true;
+    }
+
     if (needs_mangle) {
-        mangle_mangleContent(run, speed_factor);
+        mangle_mangleContent(run);
     }
 
     return true;
@@ -671,7 +694,7 @@ void input_enqueueDynamicInputs(honggfuzz_t* hfuzz) {
             continue;
         }
 
-        LOG_I("Loading dynamic input file: %s (%lu)", dynamicInputFileName, dynamicFileSz);
+        LOG_I("Loading dynamic input file: %s (%zu)", dynamicInputFileName, dynamicFileSz);
 
         run_t tmp_run;
         tmp_run.global        = hfuzz;
@@ -682,9 +705,12 @@ void input_enqueueDynamicInputs(honggfuzz_t* hfuzz) {
             .fd            = -1,
             .timeExecUSecs = 1,
             .path          = "",
+            .timedout      = false,
+            .imported      = true,
             .data          = dynamicFile,
         };
         tmp_run.timeStartedUSecs = util_timeNowUSecs() - 1;
+        tmp_run.tmOutSignaled    = false;
         memcpy(tmp_dynfile.path, dynamicInputFileName, PATH_MAX);
         tmp_run.dynfile = &tmp_dynfile;
         input_addDynamicInput(&tmp_run);
@@ -764,16 +790,24 @@ static bool input_shouldReadNewFile(run_t* run) {
 bool input_prepareStaticFile(run_t* run, bool rewind, bool needs_mangle) {
     if (input_shouldReadNewFile(run)) {
         for (;;) {
-            if (!input_getNext(run, run->dynfile->path, /* rewind= */ rewind)) {
+            size_t flen;
+            if (!input_getNext(run, run->dynfile->path, &flen, /* rewind= */ rewind)) {
                 return false;
             }
-            if (!needs_mangle || !input_inDynamicCorpus(run, run->dynfile->path)) {
-                LOG_D("Skipping '%s' as it's already in the dynamic corpus", run->dynfile->path);
+            if (needs_mangle) {
                 break;
             }
+            if (!input_inDynamicCorpus(run, run->dynfile->path, HF_MIN(flen, run->dynfile->size))) {
+                break;
+            }
+            LOG_D("Skipping '%s' (dynamic corpus size=%zu, file size=%zu) as it's already in the "
+                  "dynamic corpus",
+                run->dynfile->path, run->dynfile->size, flen);
         }
         run->global->io.testedFileCnt++;
     }
+
+    LOG_D("Reading '%s' (max size=%zu)", run->dynfile->path, run->dynfile->size);
 
     char path[PATH_MAX];
     snprintf(path, sizeof(path), "%s/%s", run->global->io.inputDir, run->dynfile->path);
@@ -791,13 +825,14 @@ bool input_prepareStaticFile(run_t* run, bool rewind, bool needs_mangle) {
 
     input_setSize(run, fileSz);
     util_memsetInline(run->dynfile->cov, '\0', sizeof(run->dynfile->cov));
-    run->dynfile->idx   = 0;
-    run->dynfile->src   = NULL;
-    run->dynfile->refs  = 0;
-    run->dynfile->phase = fuzz_getState(run->global);
+    run->dynfile->idx      = 0;
+    run->dynfile->src      = NULL;
+    run->dynfile->refs     = 0;
+    run->dynfile->phase    = fuzz_getState(run->global);
+    run->dynfile->timedout = false;
 
     if (needs_mangle) {
-        mangle_mangleContent(run, /* slow_factor= */ 0);
+        mangle_mangleContent(run);
     }
 
     return true;

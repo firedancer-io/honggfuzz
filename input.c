@@ -379,7 +379,9 @@ void input_addDynamicInput(run_t* run) {
     dynfile->timeExecUSecs = util_timeNowUSecs() - run->timeStartedUSecs;
     dynfile->timeAdded     = now;
     dynfile->data          = (uint8_t*)util_AllocCopy(run->dynfile->data, run->dynfile->size);
+#ifdef HF_USE_ENTROPY_SCHEDULE
     dynfile->entropy       = power_ComputeEntropy(dynfile->data, dynfile->size);
+#endif
     dynfile->src           = run->dynfile->src;
     dynfile->imported      = run->dynfile->imported;
     dynfile->newEdges      = run->dynfile->newEdges;
@@ -590,7 +592,9 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
     run->dynfile->pathHash      = current_input->pathHash;
     run->dynfile->cmpProgress   = current_input->cmpProgress;
     run->dynfile->rareEdgeCnt   = current_input->rareEdgeCnt;
+#ifdef HF_USE_ENTROPY_SCHEDULE
     run->dynfile->entropy       = current_input->entropy;
+#endif
     memcpy(run->dynfile->cov, current_input->cov, sizeof(run->dynfile->cov));
     snprintf(run->dynfile->path, sizeof(run->dynfile->path), "%s", current_input->path);
     memcpy(run->dynfile->data, current_input->data, current_input->size);
@@ -903,7 +907,9 @@ bool input_prepareStaticFile(run_t* run, bool rewind, bool needs_mangle) {
     run->dynfile->timeAdded = time(NULL);
     run->dynfile->newEdges  = 0;
     run->dynfile->depth     = 0;
+#ifdef HF_USE_ENTROPY_SCHEDULE
     run->dynfile->entropy   = power_ComputeEntropy(run->dynfile->data, run->dynfile->size);
+#endif
 
     if (needs_mangle) {
         mangle_mangleContent(run);

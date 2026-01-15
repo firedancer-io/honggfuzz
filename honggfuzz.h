@@ -69,7 +69,7 @@
 #define _HF_PERF_BITMAP_SIZE_16M   (1024U * 1024U * 16U)
 #define _HF_PERF_BITMAP_BITSZ_MASK 0x7FFFFFFULL
 /* Maximum number of PC guards (=trace-pc-guard) we support */
-#define _HF_PC_GUARD_MAX (1024ULL * 1024ULL * 64ULL)
+#define _HF_PC_GUARD_MAX (1024ULL * 1024ULL * 128ULL)
 
 /* Maximum size of the input file in bytes (32 MiB) */
 #define _HF_INPUT_MAX_SIZE (1024ULL * 1024ULL * 32ULL)

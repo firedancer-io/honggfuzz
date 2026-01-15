@@ -164,6 +164,9 @@ struct _dynfile_t {
     uint32_t           selectCnt;   /* Times this input was selected */
     uint32_t           cmpProgress; /* Comparison progress score */
     uint16_t           rareEdgeCnt; /* Count of rare edges this input hits */
+    uint8_t            entropy;     /* Cached entropy score (0-100) */
+    uint64_t           energy;      /* Cached energy value for selection */
+    time_t             energyTime;  /* When energy was last computed */
     fuzzState_t        phase;
     bool               timedout;
     uint8_t*           data;

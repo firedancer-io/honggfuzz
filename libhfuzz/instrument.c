@@ -779,6 +779,40 @@ __attribute__((weak)) HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_indir_call16(
  */
 static bool                  guards_initialized = false;
 
+/*
+ * Track initialized modules to prevent guard leaks on dlopen/dlclose cycles.
+ * We store the library path hash and the base guard number assigned.
+ */
+#define MAX_TRACKED_MODULES 256
+typedef struct {
+    uint64_t pathHash;
+    uint32_t baseGuard;
+    uint32_t guardCount;
+} TrackedModule;
+
+static TrackedModule trackedModules[MAX_TRACKED_MODULES];
+static uint32_t trackedModuleCount = 0;
+static pthread_mutex_t trackedModuleMutex = PTHREAD_MUTEX_INITIALIZER;
+
+static uint64_t hashString(const char* str) {
+    uint64_t hash = 14695981039346656037ULL; /* FNV-1a offset basis */
+    while (*str) {
+        hash ^= (uint64_t)(unsigned char)*str++;
+        hash *= 1099511628211ULL; /* FNV-1a prime */
+    }
+    return hash;
+}
+
+static TrackedModule* findTrackedModule(uint64_t pathHash, uint32_t guardCount) {
+    for (uint32_t i = 0; i < trackedModuleCount; i++) {
+        if (trackedModules[i].pathHash == pathHash && 
+            trackedModules[i].guardCount == guardCount) {
+            return &trackedModules[i];
+        }
+    }
+    return NULL;
+}
+
 /* Check if coverage debug output is enabled via HFUZZ_COV_DEBUG=1 */
 static bool instrumentCovDebugEnabled(void) {
     static int enabled = -1;
@@ -798,7 +832,7 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
     if ((uintptr_t)start == (uintptr_t)stop) {
         return;
     }
-    /* If this module was already initialized, skip it */
+    /* If this module was already initialized (memory still valid), skip it */
     if (*start > 0) {
         LOG_D("Module %p-%p is already initialized", start, stop);
         return;
@@ -806,15 +840,32 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
 
     size_t guardCount = ((uintptr_t)stop - (uintptr_t)start) / sizeof(*start);
     
+    /* Get library path for tracking */
+    Dl_info info;
+    const char* libName = "unknown";
+    if (dladdr(start, &info) && info.dli_fname) {
+        libName = info.dli_fname;
+    }
+    uint64_t pathHash = hashString(libName);
+
+    /* Check if we've seen this module before (prevents leaks on dlopen/dlclose) */
+    pthread_mutex_lock(&trackedModuleMutex);
+    TrackedModule* existing = findTrackedModule(pathHash, (uint32_t)guardCount);
+    if (existing) {
+        /* Reuse previously assigned guard numbers */
+        uint32_t guardNo = existing->baseGuard;
+        for (uint32_t* x = start; x < stop; x++) {
+            *x = guardNo++;
+        }
+        pthread_mutex_unlock(&trackedModuleMutex);
+        LOG_D("Reusing guards for module %s: base=%u count=%u", libName, 
+            existing->baseGuard, existing->guardCount);
+        return;
+    }
+    pthread_mutex_unlock(&trackedModuleMutex);
+
     /* Debug output for coverage registration (enable with HFUZZ_COV_DEBUG=1) */
     if (instrumentCovDebugEnabled()) {
-        /* Try to identify which library this coverage came from */
-        Dl_info info;
-        const char* libName = "unknown";
-        if (dladdr(start, &info) && info.dli_fname) {
-            libName = info.dli_fname;
-        }
-        /* Use the global guard counter from shared memory for accurate total */
         size_t globalTotal = instrumentReserveGuard(0);
         fprintf(stderr, "[HFUZZ-COV] PC-Guard: +%zu guards (global total: %zu) from %s\n",
             guardCount, globalTotal + guardCount, libName);
@@ -822,10 +873,24 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
     LOG_D("PC-Guard module initialization: %p-%p (count:%tu) at %zu", start, stop,
         guardCount, instrumentReserveGuard(0));
 
-    for (uint32_t* x = start; x < stop; x++) {
-        uint32_t guardNo = instrumentReserveGuard(1);
-        *x               = guardNo;
+    /* Allocate guards and track this module */
+    uint32_t baseGuard = instrumentReserveGuard(1);
+    *start = baseGuard;
+    for (uint32_t* x = start + 1; x < stop; x++) {
+        *x = instrumentReserveGuard(1);
     }
+
+    /* Track this module to prevent leaks on reload */
+    pthread_mutex_lock(&trackedModuleMutex);
+    if (trackedModuleCount < MAX_TRACKED_MODULES) {
+        trackedModules[trackedModuleCount].pathHash = pathHash;
+        trackedModules[trackedModuleCount].baseGuard = baseGuard;
+        trackedModules[trackedModuleCount].guardCount = (uint32_t)guardCount;
+        trackedModuleCount++;
+    } else {
+        LOG_W("Too many tracked modules, guard leak prevention disabled for %s", libName);
+    }
+    pthread_mutex_unlock(&trackedModuleMutex);
 }
 
 /* Map number of visits to an edge into buckets */

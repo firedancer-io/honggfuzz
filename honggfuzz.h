@@ -200,7 +200,8 @@ typedef struct {
 } __attribute__((aligned(_HF_CACHE_LINE_SZ))) boolCacheLine_t;
 
 /* Module tracking entry for PC guard leak prevention (in shared memory) */
-#define _HF_MAX_TRACKED_MODULES 256
+/* Increased from 256 to handle many threads racing to register modules */
+#define _HF_MAX_TRACKED_MODULES 4096
 typedef struct {
     uint64_t pathHash;
     uint32_t baseGuard;
@@ -228,8 +229,9 @@ typedef struct {
     /* Global edge frequency tracking - indexed by (guard % size) */
     uint8_t edgeHitCnt[65536];
     /* Module tracking for PC guard leak prevention - survives across process spawns */
-    trackedModule_t trackedModules[_HF_MAX_TRACKED_MODULES];
+    uint32_t        moduleRegistrationLock;  /* Simple spinlock for module registration */
     uint32_t        trackedModuleCount;
+    trackedModule_t trackedModules[_HF_MAX_TRACKED_MODULES];
 } feedback_t;
 
 typedef struct {

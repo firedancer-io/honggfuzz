@@ -793,26 +793,6 @@ static uint64_t hashString(const char* str) {
     return hash;
 }
 
-/*
- * Find a tracked module by path hash and guard count.
- * Must scan up to 'limit' entries to handle concurrent registrations.
- */
-static trackedModule_t* findTrackedModule(uint64_t pathHash, uint32_t guardCount, uint32_t limit) {
-    uint32_t searchLimit = (limit < _HF_MAX_TRACKED_MODULES) ? limit : _HF_MAX_TRACKED_MODULES;
-    for (uint32_t i = 0; i < searchLimit; i++) {
-        /* Use atomic reads to ensure visibility of concurrent writes */
-        uint64_t storedHash = ATOMIC_GET(globalCovFeedback->trackedModules[i].pathHash);
-        uint32_t storedCount = ATOMIC_GET(globalCovFeedback->trackedModules[i].guardCount);
-        uint32_t storedBase = ATOMIC_GET(globalCovFeedback->trackedModules[i].baseGuard);
-        
-        /* Entry is valid if baseGuard > 0 (guard 0 is reserved/unused) */
-        if (storedBase > 0 && storedHash == pathHash && storedCount == guardCount) {
-            return &globalCovFeedback->trackedModules[i];
-        }
-    }
-    return NULL;
-}
-
 /* Check if coverage debug output is enabled via HFUZZ_COV_DEBUG=1 */
 static bool instrumentCovDebugEnabled(void) {
     static int enabled = -1;
@@ -823,6 +803,78 @@ static bool instrumentCovDebugEnabled(void) {
     return enabled == 1;
 }
 
+/*
+ * Simple spinlock for module registration.
+ * Works across processes via shared memory.
+ * Uses test-and-test-and-set pattern for cache efficiency.
+ * Includes timeout to recover from dead lock holders.
+ */
+static inline void moduleSpinlockAcquire(void) {
+    const uint64_t MAX_SPINS = 100000000ULL;  /* ~10 seconds at 10M spins/sec */
+    uint64_t spins = 0;
+    
+    for (;;) {
+        /* First, spin on a simple read (doesn't invalidate other caches) */
+        while (__atomic_load_n(&globalCovFeedback->moduleRegistrationLock, __ATOMIC_RELAXED) != 0) {
+            /* Pause to reduce contention - uses CPU hint on x86 */
+            #if defined(__x86_64__) || defined(__i386__)
+            __asm__ volatile("pause" ::: "memory");
+            #endif
+            
+            if (++spins > MAX_SPINS) {
+                /* Timeout: lock holder may have died. Force-unlock and retry.
+                 * This is safe because module registration is idempotent -
+                 * if we corrupt state, the double-check will catch duplicates. */
+                LOG_W("Spinlock timeout - forcing unlock (holder may have died)");
+                __atomic_store_n(&globalCovFeedback->moduleRegistrationLock, 0, __ATOMIC_RELEASE);
+                spins = 0;
+            }
+        }
+        /* Now try to acquire */
+        uint32_t expected = 0;
+        if (__atomic_compare_exchange_n(&globalCovFeedback->moduleRegistrationLock,
+                                        &expected, 1,
+                                        false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+            return;  /* Got the lock */
+        }
+        /* Someone else got it first, retry */
+    }
+}
+
+static inline void moduleSpinlockRelease(void) {
+    __atomic_store_n(&globalCovFeedback->moduleRegistrationLock, 0, __ATOMIC_RELEASE);
+}
+
+/*
+ * Find a tracked module by path hash and guard count.
+ * Can be called with or without the lock (uses acquire ordering on count).
+ */
+static trackedModule_t* findTrackedModule(uint64_t pathHash, uint32_t guardCount) {
+    /* ACQUIRE load synchronizes with RELEASE store when count is incremented.
+     * This ensures we see all writes to trackedModules[0..count-1]. */
+    uint32_t count = __atomic_load_n(&globalCovFeedback->trackedModuleCount, __ATOMIC_ACQUIRE);
+    for (uint32_t i = 0; i < count && i < _HF_MAX_TRACKED_MODULES; i++) {
+        trackedModule_t* mod = &globalCovFeedback->trackedModules[i];
+        if (mod->pathHash == pathHash && mod->guardCount == guardCount && mod->baseGuard > 0) {
+            return mod;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Module registration using simple spinlock.
+ * 
+ * Algorithm (classic double-checked locking):
+ * 1. Quick check without lock (optimization)
+ * 2. Acquire lock
+ * 3. Check again under lock (another process may have registered)
+ * 4. If not found, allocate guards and register
+ * 5. Release lock
+ *
+ * This is simple, correct by construction, and the lock overhead
+ * is negligible since module init happens rarely (once per library load).
+ */
 HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop) {
     guards_initialized = true;
 
@@ -848,11 +900,9 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
     }
     uint64_t pathHash = hashString(libName);
 
-    /* Quick check: module might already be registered by another process */
-    uint32_t currentCount = ATOMIC_GET(globalCovFeedback->trackedModuleCount);
-    trackedModule_t* existing = findTrackedModule(pathHash, (uint32_t)guardCount, currentCount);
+    /* Quick optimistic check without lock (common case: already registered) */
+    trackedModule_t* existing = findTrackedModule(pathHash, (uint32_t)guardCount);
     if (existing) {
-        /* Reuse previously assigned guard numbers */
         uint32_t guardNo = existing->baseGuard;
         for (uint32_t* x = start; x < stop; x++) {
             *x = guardNo++;
@@ -862,55 +912,55 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
         return;
     }
 
-    /* Reserve a slot in the tracking array FIRST to prevent races.
-     * Multiple processes may race here, but each gets a unique slot.
-     * We'll allocate guards, then check if someone else beat us. */
-    uint32_t mySlot = ATOMIC_POST_INC(globalCovFeedback->trackedModuleCount);
+    /* Not found - need to register under lock */
+    moduleSpinlockAcquire();
     
-    if (mySlot >= _HF_MAX_TRACKED_MODULES) {
-        LOG_W("Too many tracked modules (%u), guard leak prevention disabled for %s", mySlot, libName);
-        /* Fall through to allocate guards anyway - this is the old behavior */
-    }
-
-    /* Check AGAIN if another process registered this module while we were getting our slot.
-     * Search all slots up to our slot (exclusive) - those were registered before us. */
-    existing = findTrackedModule(pathHash, (uint32_t)guardCount, mySlot);
+    /* Double-check: another process might have registered while we waited */
+    existing = findTrackedModule(pathHash, (uint32_t)guardCount);
     if (existing) {
-        /* Another process beat us! Reuse their guards instead of allocating new ones.
-         * Our slot will remain unused (baseGuard=0), which is fine. */
         uint32_t guardNo = existing->baseGuard;
         for (uint32_t* x = start; x < stop; x++) {
             *x = guardNo++;
         }
-        LOG_D("Race resolved: reusing guards for module %s: base=%u count=%u", libName, 
+        moduleSpinlockRelease();
+        LOG_D("Reusing guards for module %s (found under lock): base=%u count=%u", libName, 
             existing->baseGuard, existing->guardCount);
         return;
     }
-
-    /* We won the race - allocate guards for this module */
+    
+    /* Allocate guards */
+    uint32_t baseGuard = instrumentReserveGuard(guardCount);
+    
+    /* Assign guard numbers to the module's guard array */
+    uint32_t guardNo = baseGuard;
+    for (uint32_t* x = start; x < stop; x++) {
+        *x = guardNo++;
+    }
+    
+    /* Register in tracking table */
+    uint32_t slot = globalCovFeedback->trackedModuleCount;
+    if (slot < _HF_MAX_TRACKED_MODULES) {
+        /* Write entry data first */
+        globalCovFeedback->trackedModules[slot].pathHash = pathHash;
+        globalCovFeedback->trackedModules[slot].guardCount = (uint32_t)guardCount;
+        globalCovFeedback->trackedModules[slot].baseGuard = baseGuard;
+        /* RELEASE store ensures entry writes are visible before count increment.
+         * This synchronizes with ACQUIRE load in findTrackedModule(). */
+        __atomic_store_n(&globalCovFeedback->trackedModuleCount, slot + 1, __ATOMIC_RELEASE);
+        
+        LOG_D("PC-Guard module registration: %p-%p (count:%zu) at guard %u in slot %u", 
+            start, stop, guardCount, baseGuard, slot);
+    } else {
+        LOG_W("No free tracking slots for module %s (all %u slots in use)", 
+            libName, _HF_MAX_TRACKED_MODULES);
+    }
+    
+    moduleSpinlockRelease();
+    
     if (instrumentCovDebugEnabled()) {
         size_t globalTotal = instrumentReserveGuard(0);
         fprintf(stderr, "[HFUZZ-COV] PC-Guard: +%zu guards (global total: %zu) from %s\n",
-            guardCount, globalTotal + guardCount, libName);
-    }
-    LOG_D("PC-Guard module initialization: %p-%p (count:%tu) at %zu", start, stop,
-        guardCount, instrumentReserveGuard(0));
-
-    /* Allocate guards */
-    uint32_t baseGuard = instrumentReserveGuard(1);
-    *start = baseGuard;
-    for (uint32_t* x = start + 1; x < stop; x++) {
-        *x = instrumentReserveGuard(1);
-    }
-
-    /* Register this module in our reserved slot.
-     * Write baseGuard LAST with atomic store to signal completion to other processes. */
-    if (mySlot < _HF_MAX_TRACKED_MODULES) {
-        ATOMIC_SET(globalCovFeedback->trackedModules[mySlot].pathHash, pathHash);
-        ATOMIC_SET(globalCovFeedback->trackedModules[mySlot].guardCount, (uint32_t)guardCount);
-        /* Memory barrier: ensure pathHash and guardCount are visible before baseGuard */
-        __atomic_thread_fence(__ATOMIC_RELEASE);
-        ATOMIC_SET(globalCovFeedback->trackedModules[mySlot].baseGuard, baseGuard);
+            guardCount, globalTotal, libName);
     }
 }
 

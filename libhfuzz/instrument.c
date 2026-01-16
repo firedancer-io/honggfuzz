@@ -780,19 +780,9 @@ __attribute__((weak)) HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_indir_call16(
 static bool                  guards_initialized = false;
 
 /*
- * Track initialized modules to prevent guard leaks on dlopen/dlclose cycles.
- * We store the library path hash and the base guard number assigned.
+ * Module tracking is now in shared memory (globalCovFeedback->trackedModules)
+ * to prevent guard leaks when new processes are spawned in persistent mode.
  */
-#define MAX_TRACKED_MODULES 256
-typedef struct {
-    uint64_t pathHash;
-    uint32_t baseGuard;
-    uint32_t guardCount;
-} TrackedModule;
-
-static TrackedModule trackedModules[MAX_TRACKED_MODULES];
-static uint32_t trackedModuleCount = 0;
-static pthread_mutex_t trackedModuleMutex = PTHREAD_MUTEX_INITIALIZER;
 
 static uint64_t hashString(const char* str) {
     uint64_t hash = 14695981039346656037ULL; /* FNV-1a offset basis */
@@ -803,11 +793,21 @@ static uint64_t hashString(const char* str) {
     return hash;
 }
 
-static TrackedModule* findTrackedModule(uint64_t pathHash, uint32_t guardCount) {
-    for (uint32_t i = 0; i < trackedModuleCount; i++) {
-        if (trackedModules[i].pathHash == pathHash && 
-            trackedModules[i].guardCount == guardCount) {
-            return &trackedModules[i];
+/*
+ * Find a tracked module by path hash and guard count.
+ * Must scan up to 'limit' entries to handle concurrent registrations.
+ */
+static trackedModule_t* findTrackedModule(uint64_t pathHash, uint32_t guardCount, uint32_t limit) {
+    uint32_t searchLimit = (limit < _HF_MAX_TRACKED_MODULES) ? limit : _HF_MAX_TRACKED_MODULES;
+    for (uint32_t i = 0; i < searchLimit; i++) {
+        /* Use atomic reads to ensure visibility of concurrent writes */
+        uint64_t storedHash = ATOMIC_GET(globalCovFeedback->trackedModules[i].pathHash);
+        uint32_t storedCount = ATOMIC_GET(globalCovFeedback->trackedModules[i].guardCount);
+        uint32_t storedBase = ATOMIC_GET(globalCovFeedback->trackedModules[i].baseGuard);
+        
+        /* Entry is valid if baseGuard > 0 (guard 0 is reserved/unused) */
+        if (storedBase > 0 && storedHash == pathHash && storedCount == guardCount) {
+            return &globalCovFeedback->trackedModules[i];
         }
     }
     return NULL;
@@ -848,23 +848,46 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
     }
     uint64_t pathHash = hashString(libName);
 
-    /* Check if we've seen this module before (prevents leaks on dlopen/dlclose) */
-    pthread_mutex_lock(&trackedModuleMutex);
-    TrackedModule* existing = findTrackedModule(pathHash, (uint32_t)guardCount);
+    /* Quick check: module might already be registered by another process */
+    uint32_t currentCount = ATOMIC_GET(globalCovFeedback->trackedModuleCount);
+    trackedModule_t* existing = findTrackedModule(pathHash, (uint32_t)guardCount, currentCount);
     if (existing) {
         /* Reuse previously assigned guard numbers */
         uint32_t guardNo = existing->baseGuard;
         for (uint32_t* x = start; x < stop; x++) {
             *x = guardNo++;
         }
-        pthread_mutex_unlock(&trackedModuleMutex);
         LOG_D("Reusing guards for module %s: base=%u count=%u", libName, 
             existing->baseGuard, existing->guardCount);
         return;
     }
-    pthread_mutex_unlock(&trackedModuleMutex);
 
-    /* Debug output for coverage registration (enable with HFUZZ_COV_DEBUG=1) */
+    /* Reserve a slot in the tracking array FIRST to prevent races.
+     * Multiple processes may race here, but each gets a unique slot.
+     * We'll allocate guards, then check if someone else beat us. */
+    uint32_t mySlot = ATOMIC_POST_INC(globalCovFeedback->trackedModuleCount);
+    
+    if (mySlot >= _HF_MAX_TRACKED_MODULES) {
+        LOG_W("Too many tracked modules (%u), guard leak prevention disabled for %s", mySlot, libName);
+        /* Fall through to allocate guards anyway - this is the old behavior */
+    }
+
+    /* Check AGAIN if another process registered this module while we were getting our slot.
+     * Search all slots up to our slot (exclusive) - those were registered before us. */
+    existing = findTrackedModule(pathHash, (uint32_t)guardCount, mySlot);
+    if (existing) {
+        /* Another process beat us! Reuse their guards instead of allocating new ones.
+         * Our slot will remain unused (baseGuard=0), which is fine. */
+        uint32_t guardNo = existing->baseGuard;
+        for (uint32_t* x = start; x < stop; x++) {
+            *x = guardNo++;
+        }
+        LOG_D("Race resolved: reusing guards for module %s: base=%u count=%u", libName, 
+            existing->baseGuard, existing->guardCount);
+        return;
+    }
+
+    /* We won the race - allocate guards for this module */
     if (instrumentCovDebugEnabled()) {
         size_t globalTotal = instrumentReserveGuard(0);
         fprintf(stderr, "[HFUZZ-COV] PC-Guard: +%zu guards (global total: %zu) from %s\n",
@@ -873,24 +896,22 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
     LOG_D("PC-Guard module initialization: %p-%p (count:%tu) at %zu", start, stop,
         guardCount, instrumentReserveGuard(0));
 
-    /* Allocate guards and track this module */
+    /* Allocate guards */
     uint32_t baseGuard = instrumentReserveGuard(1);
     *start = baseGuard;
     for (uint32_t* x = start + 1; x < stop; x++) {
         *x = instrumentReserveGuard(1);
     }
 
-    /* Track this module to prevent leaks on reload */
-    pthread_mutex_lock(&trackedModuleMutex);
-    if (trackedModuleCount < MAX_TRACKED_MODULES) {
-        trackedModules[trackedModuleCount].pathHash = pathHash;
-        trackedModules[trackedModuleCount].baseGuard = baseGuard;
-        trackedModules[trackedModuleCount].guardCount = (uint32_t)guardCount;
-        trackedModuleCount++;
-    } else {
-        LOG_W("Too many tracked modules, guard leak prevention disabled for %s", libName);
+    /* Register this module in our reserved slot.
+     * Write baseGuard LAST with atomic store to signal completion to other processes. */
+    if (mySlot < _HF_MAX_TRACKED_MODULES) {
+        ATOMIC_SET(globalCovFeedback->trackedModules[mySlot].pathHash, pathHash);
+        ATOMIC_SET(globalCovFeedback->trackedModules[mySlot].guardCount, (uint32_t)guardCount);
+        /* Memory barrier: ensure pathHash and guardCount are visible before baseGuard */
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+        ATOMIC_SET(globalCovFeedback->trackedModules[mySlot].baseGuard, baseGuard);
     }
-    pthread_mutex_unlock(&trackedModuleMutex);
 }
 
 /* Map number of visits to an edge into buckets */

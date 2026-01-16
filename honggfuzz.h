@@ -199,6 +199,14 @@ typedef struct {
     uint8_t _pad[_HF_CACHE_LINE_SZ - sizeof(bool)];
 } __attribute__((aligned(_HF_CACHE_LINE_SZ))) boolCacheLine_t;
 
+/* Module tracking entry for PC guard leak prevention (in shared memory) */
+#define _HF_MAX_TRACKED_MODULES 256
+typedef struct {
+    uint64_t pathHash;
+    uint32_t baseGuard;
+    uint32_t guardCount;
+} trackedModule_t;
+
 typedef struct {
     uint8_t  pcGuardMap[_HF_PC_GUARD_MAX];
     uint8_t  bbMapPc[_HF_PERF_BITMAP_SIZE_16M];
@@ -219,6 +227,9 @@ typedef struct {
     cntCacheLine_t  pidRareEdgeCnt[_HF_THREAD_MAX]; /* Rare edges hit this run */
     /* Global edge frequency tracking - indexed by (guard % size) */
     uint8_t edgeHitCnt[65536];
+    /* Module tracking for PC guard leak prevention - survives across process spawns */
+    trackedModule_t trackedModules[_HF_MAX_TRACKED_MODULES];
+    uint32_t        trackedModuleCount;
 } feedback_t;
 
 typedef struct {

@@ -224,7 +224,7 @@ uint64_t power_calculateEnergy(run_t* run, dynfile_t* dynfile) {
     }
 
 #ifdef HF_USE_ENTROPY_SCHEDULE
-    /* Entropy - penalize random blobs, boost structured data (uses cached value) */
+    /* Entropy - penalize random blobs, boost structured data */
     if (dynfile->size > 0) {
         unsigned entropy = dynfile->entropy;
         if (entropy > 93) {

@@ -278,18 +278,18 @@ __attribute__((weak)) size_t instrumentReserveGuard(size_t cnt) {
 
     if (cnt == 0) {
         /* Query current guard count without allocating */
-        return (size_t)ATOMIC_GET(globalCovFeedback->guardNb);
+        return (size_t)atomic_load_explicit(&globalCovFeedback->guardNb, memory_order_relaxed);
     }
 
     /* Atomically allocate guard numbers from the shared counter.
      * Guard 0 is reserved (used as uninitialized marker), so we ensure
      * the counter starts at 1. Use CAS to initialize if needed. */
     uint64_t expected = 0;
-    __atomic_compare_exchange_n(&globalCovFeedback->guardNb, &expected, 1,
-                                false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    atomic_compare_exchange_strong_explicit(&globalCovFeedback->guardNb, &expected, 1,
+                                            memory_order_seq_cst, memory_order_seq_cst);
 
     /* Now atomically allocate our range of guards */
-    size_t base = (size_t)__atomic_fetch_add(&globalCovFeedback->guardNb, cnt, __ATOMIC_SEQ_CST);
+    size_t base = (size_t)atomic_fetch_add_explicit(&globalCovFeedback->guardNb, cnt, memory_order_seq_cst);
 
     size_t newTotal = base + cnt;
     if (newTotal >= _HF_PC_GUARD_MAX) {
@@ -899,6 +899,14 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
         return;
     }
     
+    /* Check guard limit before allocating to release lock before potential LOG_F */
+    size_t currentGuards = instrumentReserveGuard(0);
+    if (currentGuards + guardCount >= _HF_PC_GUARD_MAX) {
+        moduleSpinlockRelease();
+        LOG_F("PC-guard limit would be exceeded: current=%zu, requested=%zu, max=%llu",
+              currentGuards, guardCount, _HF_PC_GUARD_MAX);
+    }
+    
     /* Allocate guards */
     uint32_t baseGuard = instrumentReserveGuard(guardCount);
     
@@ -919,11 +927,13 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
          * This synchronizes with ACQUIRE load in findTrackedModule(). */
         atomic_store_explicit(&globalCovFeedback->trackedModuleCount, slot + 1, memory_order_release);
         
-        LOG_D("PC-Guard module registration: %p-%p (count:%zu) at guard %u in slot %u", 
+        LOG_I("PC-Guard module registration: %p-%p (count:%zu) at guard %u in slot %u", 
             start, stop, guardCount, baseGuard, slot);
     } else {
-        LOG_W("No free tracking slots for module %s (all %u slots in use)", 
-            libName, _HF_MAX_TRACKED_MODULES);
+        moduleSpinlockRelease();
+        LOG_F("No free tracking slots for module %s (all %u slots in use). "
+              "Increase _HF_MAX_TRACKED_MODULES in honggfuzz.h", 
+              libName, _HF_MAX_TRACKED_MODULES);
     }
     
     moduleSpinlockRelease();

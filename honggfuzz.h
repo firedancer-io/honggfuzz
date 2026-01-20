@@ -212,7 +212,7 @@ typedef struct {
     uint8_t  pcGuardMap[_HF_PC_GUARD_MAX];
     uint8_t  bbMapPc[_HF_PERF_BITMAP_SIZE_16M];
     uint32_t bbMapCmp[_HF_PERF_BITMAP_SIZE_16M];
-    uint64_t guardNb;
+    _Atomic uint64_t guardNb;
     /* Per-thread counters - cache-line padded to avoid false sharing */
     cntCacheLine_t  pidNewPC[_HF_THREAD_MAX];
     cntCacheLine_t  pidNewEdge[_HF_THREAD_MAX];

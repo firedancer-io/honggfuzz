@@ -1101,29 +1101,107 @@ void __sanitizer_cov_8bit_counters_init(char* start, char* end) {
     if ((uintptr_t)start == (uintptr_t)end) {
         return;
     }
+    
+    size_t counterCount = (uintptr_t)end - (uintptr_t)start;
+    
+    /* Get library path for tracking */
+    Dl_info info;
+    const char* libName = "unknown";
+    if (dladdr(start, &info) && info.dli_fname) {
+        libName = info.dli_fname;
+    }
+    /* Use different hash space for 8-bit counters vs PC guards to avoid collisions */
+    uint64_t pathHash = util_hash(libName, strlen(libName)) ^ 0x8B178B178B178B17ULL;
+    
+    /* Quick optimistic check without lock (common case: already registered) */
+    trackedModule_t* existing = findTrackedModule(pathHash, (uint32_t)counterCount);
+    if (existing) {
+        /* Reuse existing guard allocation */
+        for (size_t i = 0; i < ARRAYSIZE(hf8bitcounters); i++) {
+            if (hf8bitcounters[i].start == NULL) {
+                hf8bitcounters[i].start = (uint8_t*)start;
+                hf8bitcounters[i].cnt   = counterCount;
+                hf8bitcounters[i].guard = existing->baseGuard;
+                LOG_D("Reusing 8-bit guards for module %s: base=%u count=%u", libName,
+                    existing->baseGuard, existing->guardCount);
+                break;
+            }
+        }
+        return;
+    }
+    
+    /* Not found - need to register under lock */
+    moduleSpinlockAcquire();
+    
+    /* Double-check: another process might have registered while we waited */
+    existing = findTrackedModule(pathHash, (uint32_t)counterCount);
+    if (existing) {
+        for (size_t i = 0; i < ARRAYSIZE(hf8bitcounters); i++) {
+            if (hf8bitcounters[i].start == NULL) {
+                hf8bitcounters[i].start = (uint8_t*)start;
+                hf8bitcounters[i].cnt   = counterCount;
+                hf8bitcounters[i].guard = existing->baseGuard;
+                break;
+            }
+        }
+        moduleSpinlockRelease();
+        LOG_D("Reusing 8-bit guards for module %s (found under lock): base=%u count=%u", libName,
+            existing->baseGuard, existing->guardCount);
+        return;
+    }
+    
+    /* Check guard limit before allocating to release lock before potential LOG_F */
+    size_t currentGuards = instrumentReserveGuard(0);
+    if (currentGuards + counterCount >= _HF_PC_GUARD_MAX) {
+        moduleSpinlockRelease();
+        LOG_F("PC-guard limit would be exceeded (8-bit): current=%zu, requested=%zu, max=%llu",
+              currentGuards, counterCount, _HF_PC_GUARD_MAX);
+    }
+    
+    /* Allocate guards and register in local array */
+    size_t baseGuard = 0;
+    bool foundSlot = false;
     for (size_t i = 0; i < ARRAYSIZE(hf8bitcounters); i++) {
         if (hf8bitcounters[i].start == NULL) {
             hf8bitcounters[i].start = (uint8_t*)start;
-            hf8bitcounters[i].cnt   = (uintptr_t)end - (uintptr_t)start;
-            hf8bitcounters[i].guard = instrumentReserveGuard(hf8bitcounters[i].cnt);
-            
-            /* Debug output for coverage registration (enable with HFUZZ_COV_DEBUG=1) */
-            if (instrumentCovDebugEnabled()) {
-                /* Try to identify which library this coverage came from */
-                Dl_info info;
-                const char* libName = "unknown";
-                if (dladdr(start, &info) && info.dli_fname) {
-                    libName = info.dli_fname;
-                }
-                /* Use the global guard counter from shared memory for accurate total */
-                size_t globalTotal = instrumentReserveGuard(0);
-                LOG_I("[COV] 8-bit counters: +%zu guards (global total: %zu) from %s",
-                    hf8bitcounters[i].cnt, globalTotal, libName);
-            }
-            LOG_I("8-bit module initialization %p-%p (count:%zu) at guard %zu", start, end,
-                hf8bitcounters[i].cnt, hf8bitcounters[i].guard);
+            hf8bitcounters[i].cnt   = counterCount;
+            hf8bitcounters[i].guard = instrumentReserveGuard(counterCount);
+            baseGuard = hf8bitcounters[i].guard;
+            foundSlot = true;
             break;
         }
+    }
+    
+    if (!foundSlot) {
+        moduleSpinlockRelease();
+        LOG_F("No free local slots for 8-bit counters (all %zu slots in use). "
+              "Increase hf8bitcounters array size in instrument.c",
+              ARRAYSIZE(hf8bitcounters));
+    }
+    
+    /* Register in shared tracking table */
+    uint32_t slot = atomic_load_explicit(&globalCovFeedback->trackedModuleCount, memory_order_relaxed);
+    if (slot < _HF_MAX_TRACKED_MODULES) {
+        globalCovFeedback->trackedModules[slot].pathHash = pathHash;
+        globalCovFeedback->trackedModules[slot].guardCount = (uint32_t)counterCount;
+        globalCovFeedback->trackedModules[slot].baseGuard = (uint32_t)baseGuard;
+        atomic_store_explicit(&globalCovFeedback->trackedModuleCount, slot + 1, memory_order_release);
+        
+        LOG_I("8-bit module registration: %p-%p (count:%zu) at guard %zu in slot %u",
+            start, end, counterCount, baseGuard, slot);
+    } else {
+        moduleSpinlockRelease();
+        LOG_F("No free tracking slots for 8-bit module %s (all %u slots in use). "
+              "Increase _HF_MAX_TRACKED_MODULES in honggfuzz.h",
+              libName, _HF_MAX_TRACKED_MODULES);
+    }
+    
+    moduleSpinlockRelease();
+    
+    if (instrumentCovDebugEnabled()) {
+        size_t globalTotal = instrumentReserveGuard(0);
+        LOG_I("[COV] 8-bit counters: +%zu guards (global total: %zu) from %s",
+            counterCount, globalTotal, libName);
     }
 }
 

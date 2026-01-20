@@ -499,7 +499,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
 
             /* Force selection after too many iterations to prevent spinning */
             if (++iterations >= maxIterations) {
-                LOG_D("Selection loop hit iteration cap (%u), forcing selection", maxIterations);
+                LOG_W("Selection loop hit iteration cap (%u), forcing selection", maxIterations);
                 break;
             }
 

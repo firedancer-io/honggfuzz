@@ -9,6 +9,7 @@
 #include <linux/mman.h>
 #endif /* defined(_HF_ARCH_LINUX) */
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -779,20 +780,6 @@ __attribute__((weak)) HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_indir_call16(
  */
 static bool                  guards_initialized = false;
 
-/*
- * Module tracking is now in shared memory (globalCovFeedback->trackedModules)
- * to prevent guard leaks when new processes are spawned in persistent mode.
- */
-
-static uint64_t hashString(const char* str) {
-    uint64_t hash = 14695981039346656037ULL; /* FNV-1a offset basis */
-    while (*str) {
-        hash ^= (uint64_t)(unsigned char)*str++;
-        hash *= 1099511628211ULL; /* FNV-1a prime */
-    }
-    return hash;
-}
-
 /* Check if coverage debug output is enabled via HFUZZ_COV_DEBUG=1 */
 static bool instrumentCovDebugEnabled(void) {
     static int enabled = -1;
@@ -804,45 +791,40 @@ static bool instrumentCovDebugEnabled(void) {
 }
 
 /*
- * Simple spinlock for module registration.
- * Works across processes via shared memory.
- * Uses test-and-test-and-set pattern for cache efficiency.
- * Includes timeout to recover from dead lock holders.
+ * Simple spinlock for synchronizing cross-process module registration.
  */
 static inline void moduleSpinlockAcquire(void) {
-    const uint64_t MAX_SPINS = 100000000ULL;  /* ~10 seconds at 10M spins/sec */
+    const uint64_t MAX_SPINS = 100000000ULL;  /* ~10s at 10M spins/s */
     uint64_t spins = 0;
     
     for (;;) {
-        /* First, spin on a simple read (doesn't invalidate other caches) */
-        while (__atomic_load_n(&globalCovFeedback->moduleRegistrationLock, __ATOMIC_RELAXED) != 0) {
-            /* Pause to reduce contention - uses CPU hint on x86 */
+        while (atomic_load_explicit(&globalCovFeedback->moduleRegistrationLock, memory_order_relaxed) != 0) {
             #if defined(__x86_64__) || defined(__i386__)
-            __asm__ volatile("pause" ::: "memory");
+            __builtin_ia32_pause();
+            #elif defined(__aarch64__)
+            __asm__ volatile("yield");
             #endif
             
             if (++spins > MAX_SPINS) {
-                /* Timeout: lock holder may have died. Force-unlock and retry.
-                 * This is safe because module registration is idempotent -
-                 * if we corrupt state, the double-check will catch duplicates. */
+                /* Timeout: lock holder may have died. Force-unlock and retry. */
                 LOG_W("Spinlock timeout - forcing unlock (holder may have died)");
-                __atomic_store_n(&globalCovFeedback->moduleRegistrationLock, 0, __ATOMIC_RELEASE);
+                atomic_store_explicit(&globalCovFeedback->moduleRegistrationLock, 0, memory_order_release);
                 spins = 0;
             }
         }
-        /* Now try to acquire */
+
         uint32_t expected = 0;
-        if (__atomic_compare_exchange_n(&globalCovFeedback->moduleRegistrationLock,
-                                        &expected, 1,
-                                        false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
-            return;  /* Got the lock */
+        if (atomic_compare_exchange_weak_explicit(&globalCovFeedback->moduleRegistrationLock,
+                                                  &expected, 1,
+                                                  memory_order_acquire, memory_order_relaxed)) {
+            return;  /* Successfully acquired */
         }
         /* Someone else got it first, retry */
     }
 }
 
 static inline void moduleSpinlockRelease(void) {
-    __atomic_store_n(&globalCovFeedback->moduleRegistrationLock, 0, __ATOMIC_RELEASE);
+    atomic_store_explicit(&globalCovFeedback->moduleRegistrationLock, 0, memory_order_release);
 }
 
 /*
@@ -851,7 +833,7 @@ static inline void moduleSpinlockRelease(void) {
  */
 static trackedModule_t* findTrackedModule(uint64_t pathHash, uint32_t guardCount) {
     /* ACQUIRE load synchronizes with RELEASE store when count is incremented.
-     * This ensures we see all writes to trackedModules[0..count-1]. */
+     * This ensures we see all writes to trackedModules[0..count-1] */
     uint32_t count = __atomic_load_n(&globalCovFeedback->trackedModuleCount, __ATOMIC_ACQUIRE);
     for (uint32_t i = 0; i < count && i < _HF_MAX_TRACKED_MODULES; i++) {
         trackedModule_t* mod = &globalCovFeedback->trackedModules[i];
@@ -862,19 +844,6 @@ static trackedModule_t* findTrackedModule(uint64_t pathHash, uint32_t guardCount
     return NULL;
 }
 
-/*
- * Module registration using simple spinlock.
- * 
- * Algorithm (classic double-checked locking):
- * 1. Quick check without lock (optimization)
- * 2. Acquire lock
- * 3. Check again under lock (another process may have registered)
- * 4. If not found, allocate guards and register
- * 5. Release lock
- *
- * This is simple, correct by construction, and the lock overhead
- * is negligible since module init happens rarely (once per library load).
- */
 HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop) {
     guards_initialized = true;
 
@@ -898,7 +867,7 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
     if (dladdr(start, &info) && info.dli_fname) {
         libName = info.dli_fname;
     }
-    uint64_t pathHash = hashString(libName);
+    uint64_t pathHash = util_hash(libName, strlen(libName));
 
     /* Quick optimistic check without lock (common case: already registered) */
     trackedModule_t* existing = findTrackedModule(pathHash, (uint32_t)guardCount);
@@ -959,7 +928,7 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
     
     if (instrumentCovDebugEnabled()) {
         size_t globalTotal = instrumentReserveGuard(0);
-        fprintf(stderr, "[HFUZZ-COV] PC-Guard: +%zu guards (global total: %zu) from %s\n",
+        LOG_I("[COV] PC-Guard: +%zu guards (global total: %zu) from %s",
             guardCount, globalTotal, libName);
     }
 }
@@ -1136,10 +1105,10 @@ void __sanitizer_cov_8bit_counters_init(char* start, char* end) {
                 }
                 /* Use the global guard counter from shared memory for accurate total */
                 size_t globalTotal = instrumentReserveGuard(0);
-                fprintf(stderr, "[HFUZZ-COV] 8-bit counters: +%zu guards (global total: %zu) from %s\n",
+                LOG_I("[COV] 8-bit counters: +%zu guards (global total: %zu) from %s",
                     hf8bitcounters[i].cnt, globalTotal, libName);
             }
-            LOG_D("8-bit module initialization %p-%p (count:%zu) at guard %zu", start, end,
+            LOG_I("8-bit module initialization %p-%p (count:%zu) at guard %zu", start, end,
                 hf8bitcounters[i].cnt, hf8bitcounters[i].guard);
             break;
         }

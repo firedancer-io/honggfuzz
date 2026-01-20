@@ -29,6 +29,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/param.h>
@@ -200,7 +201,6 @@ typedef struct {
 } __attribute__((aligned(_HF_CACHE_LINE_SZ))) boolCacheLine_t;
 
 /* Module tracking entry for PC guard leak prevention (in shared memory) */
-/* Increased from 256 to handle many threads racing to register modules */
 #define _HF_MAX_TRACKED_MODULES 4096
 typedef struct {
     uint64_t pathHash;
@@ -229,7 +229,7 @@ typedef struct {
     /* Global edge frequency tracking - indexed by (guard % size) */
     uint8_t edgeHitCnt[65536];
     /* Module tracking for PC guard leak prevention - survives across process spawns */
-    uint32_t        moduleRegistrationLock;  /* Simple spinlock for module registration */
+    _Atomic uint32_t moduleRegistrationLock;  /* Simple spinlock for module registration */
     uint32_t        trackedModuleCount;
     trackedModule_t trackedModules[_HF_MAX_TRACKED_MODULES];
 } feedback_t;

@@ -808,10 +808,7 @@ static inline void moduleSpinlockAcquire(void) {
             #endif
             
             if (++spins > MAX_SPINS) {
-                /* Timeout: lock holder may have died. Force-unlock and retry. */
-                LOG_W("Spinlock timeout - forcing unlock (holder may have died)");
-                atomic_store_explicit(&globalCovFeedback->moduleRegistrationLock, 0, memory_order_release);
-                spins = 0;
+                LOG_F("Spinlock timeout after ~10s - lock holder may have died or deadlocked");
             }
         }
 

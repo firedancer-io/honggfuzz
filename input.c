@@ -477,6 +477,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
 
         unsigned iterations = 0;
         const unsigned maxIterations = 256; /* Prevent infinite loop spinning */
+        time_t now = time(NULL); /* Get time once outside the loop */
 
         for (;;) {
             if (run->global->io.dynfileqCurrent == NULL) {
@@ -498,12 +499,11 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
 
             /* Force selection after too many iterations to prevent spinning */
             if (++iterations >= maxIterations) {
-                LOG_W("Selection loop hit iteration cap (%u), forcing selection", maxIterations);
+                LOG_D("Selection loop hit iteration cap (%u), forcing selection", maxIterations);
                 break;
             }
 
             /* Use cached energy, recompute if stale (>10 seconds old) */
-            time_t now = time(NULL);
             uint64_t energy;
             if (run->current->energy == 0 || (now - run->current->energyTime) > 10) {
                 energy = power_calculateEnergy(run, run->current);

@@ -476,7 +476,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         MX_SCOPED_RWLOCK_WRITE(&run->global->mutex.dynfileq);
 
         unsigned iterations = 0;
-        const unsigned maxIterations = 128; /* Prevent infinite loop spinning */
+        const unsigned maxIterations = 256; /* Prevent infinite loop spinning */
 
         for (;;) {
             if (run->global->io.dynfileqCurrent == NULL) {

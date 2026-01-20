@@ -803,6 +803,8 @@ static inline void moduleSpinlockAcquire(void) {
             __builtin_ia32_pause();
             #elif defined(__aarch64__)
             __asm__ volatile("yield");
+            #else
+            __asm__ volatile("" ::: "memory");
             #endif
             
             if (++spins > MAX_SPINS) {
@@ -834,7 +836,7 @@ static inline void moduleSpinlockRelease(void) {
 static trackedModule_t* findTrackedModule(uint64_t pathHash, uint32_t guardCount) {
     /* ACQUIRE load synchronizes with RELEASE store when count is incremented.
      * This ensures we see all writes to trackedModules[0..count-1] */
-    uint32_t count = __atomic_load_n(&globalCovFeedback->trackedModuleCount, __ATOMIC_ACQUIRE);
+    uint32_t count = atomic_load_explicit(&globalCovFeedback->trackedModuleCount, memory_order_acquire);
     for (uint32_t i = 0; i < count && i < _HF_MAX_TRACKED_MODULES; i++) {
         trackedModule_t* mod = &globalCovFeedback->trackedModules[i];
         if (mod->pathHash == pathHash && mod->guardCount == guardCount && mod->baseGuard > 0) {
@@ -907,7 +909,7 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
     }
     
     /* Register in tracking table */
-    uint32_t slot = globalCovFeedback->trackedModuleCount;
+    uint32_t slot = atomic_load_explicit(&globalCovFeedback->trackedModuleCount, memory_order_relaxed);
     if (slot < _HF_MAX_TRACKED_MODULES) {
         /* Write entry data first */
         globalCovFeedback->trackedModules[slot].pathHash = pathHash;
@@ -915,7 +917,7 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
         globalCovFeedback->trackedModules[slot].baseGuard = baseGuard;
         /* RELEASE store ensures entry writes are visible before count increment.
          * This synchronizes with ACQUIRE load in findTrackedModule(). */
-        __atomic_store_n(&globalCovFeedback->trackedModuleCount, slot + 1, __ATOMIC_RELEASE);
+        atomic_store_explicit(&globalCovFeedback->trackedModuleCount, slot + 1, memory_order_release);
         
         LOG_D("PC-Guard module registration: %p-%p (count:%zu) at guard %u in slot %u", 
             start, stop, guardCount, baseGuard, slot);

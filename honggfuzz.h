@@ -230,7 +230,7 @@ typedef struct {
     uint8_t edgeHitCnt[65536];
     /* Module tracking for PC guard leak prevention - survives across process spawns */
     _Atomic uint32_t moduleRegistrationLock;  /* Simple spinlock for module registration */
-    uint32_t        trackedModuleCount;
+    _Atomic uint32_t trackedModuleCount;
     trackedModule_t trackedModules[_HF_MAX_TRACKED_MODULES];
 } feedback_t;
 

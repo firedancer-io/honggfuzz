@@ -51,6 +51,7 @@
 #include "libhfcommon/util.h"
 #include "socketfuzzer.h"
 #include "subproc.h"
+#include "hfuzz_metrics.h"
 
 #if defined(_HF_ARCH_LINUX) && !defined(_HF_LINUX_NO_BFD)
 #include "linux/bfd.h"
@@ -509,6 +510,9 @@ int main(int argc, char** argv) {
     setupSignalsPreThreads();
     fuzz_threadsStart(&hfuzz);
 
+    /* Initialize metrics logging (optional - weak symbol, no-op if not overridden) */
+    hfuzz_metrics_session_init(hfuzz.exe.cmdline[0], argc, myargs);
+
     pthread_t sigthread;
     if (!subproc_runThread(&hfuzz, &sigthread, signalThread, /* joinable= */ false)) {
         LOG_F("Couldn't start the signal thread");
@@ -544,6 +548,28 @@ int main(int argc, char** argv) {
     }
 
     printSummary(&hfuzz);
+
+    /* Finalize metrics logging (optional - weak symbol, no-op if not overridden) */
+    {
+        uint64_t elapsed_sec = time(NULL) - hfuzz.timing.timeStart;
+        struct rusage usage;
+        uint64_t memory_peak_mb = 0;
+        if (getrusage(RUSAGE_CHILDREN, &usage) == 0) {
+#ifdef _HF_ARCH_DARWIN
+            memory_peak_mb = usage.ru_maxrss >> 20;
+#else
+            memory_peak_mb = usage.ru_maxrss >> 10;
+#endif
+        }
+        const char* status = (hfuzz.cfg.exitUponCrash && ATOMIC_GET(hfuzz.cnts.crashesCnt) > 0) 
+                             ? "crashed" : "completed";
+        hfuzz_metrics_session_end(status,
+                                   hfuzz.cnts.mutationsCnt,
+                                   hfuzz.cnts.crashesCnt,
+                                   hfuzz.cnts.timeoutedCnt,
+                                   elapsed_sec,
+                                   memory_peak_mb);
+    }
 
     return exitcode;
 }

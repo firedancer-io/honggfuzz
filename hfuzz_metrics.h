@@ -119,6 +119,44 @@ void hfuzz_metrics_register_module(const char* module_name,
                                     uint32_t guard_start,
                                     uint32_t guard_count);
 
+/*
+ * PC table entry as provided by __sanitizer_cov_pcs_init.
+ * Each entry contains the PC address and flags (is_function_entry).
+ */
+typedef struct {
+    uintptr_t pc;
+    uintptr_t flags;  /* 1 = function entry, 0 = basic block */
+} hfuzz_pc_entry_t;
+
+/*
+ * Register PC table for a module (called from __sanitizer_cov_pcs_init).
+ * This provides the actual PC addresses that can be symbolized to source locations.
+ *
+ * module_name: path/name of the instrumented module  
+ * pcs: array of PC entries (address + flags pairs)
+ * pc_count: number of entries in the table
+ * guard_start: starting guard number for this module (to correlate with guard map)
+ *
+ * The PC table entries correspond 1:1 with guards, allowing us to map
+ * guard[i] -> pcs[i - guard_start] -> symbolized source location.
+ */
+void hfuzz_metrics_register_pc_table(const char* module_name,
+                                      const hfuzz_pc_entry_t* pcs,
+                                      size_t pc_count,
+                                      uint32_t guard_start);
+
+/*
+ * Log full coverage report with both covered and uncovered locations.
+ * Uses the registered PC tables to symbolize all guards.
+ *
+ * guard_map: pointer to the PC guard hit count map
+ * guard_count: number of guards in the map
+ * output_path: path to write JSON coverage report (NULL for ClickHouse only)
+ */
+void hfuzz_metrics_log_full_coverage_report(const uint8_t* guard_map,
+                                             uint64_t guard_count,
+                                             const char* output_path);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

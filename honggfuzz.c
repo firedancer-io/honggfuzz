@@ -561,6 +561,24 @@ int main(int argc, char** argv) {
             memory_peak_mb = usage.ru_maxrss >> 10;
 #endif
         }
+        /* Log full coverage report before session end */
+        if (hfuzz.feedback.covFeedbackMap) {
+            uint64_t guardNb = atomic_load_explicit(
+                &hfuzz.feedback.covFeedbackMap->guardNb, memory_order_relaxed);
+            
+            /* Generate output path for JSON coverage report if coverage dir is set */
+            char coverage_path[PATH_MAX] = {0};
+            if (hfuzz.io.covDirNew) {
+                snprintf(coverage_path, sizeof(coverage_path), 
+                         "%s/coverage_report.json", hfuzz.io.covDirNew);
+            }
+            
+            hfuzz_metrics_log_full_coverage_report(
+                hfuzz.feedback.covFeedbackMap->pcGuardMap,
+                guardNb,
+                coverage_path[0] ? coverage_path : NULL);
+        }
+        
         const char* status = (hfuzz.cfg.exitUponCrash && ATOMIC_GET(hfuzz.cnts.crashesCnt) > 0) 
                              ? "crashed" : "completed";
         hfuzz_metrics_session_end(status,

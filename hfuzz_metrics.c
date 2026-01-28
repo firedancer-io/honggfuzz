@@ -72,3 +72,18 @@ void hfuzz_metrics_register_module(const char* module_name HF_ATTR_UNUSED,
     /* No-op by default */
 }
 
+__attribute__((weak))
+void hfuzz_metrics_register_pc_table(const char* module_name HF_ATTR_UNUSED,
+                                      const hfuzz_pc_entry_t* pcs HF_ATTR_UNUSED,
+                                      size_t pc_count HF_ATTR_UNUSED,
+                                      uint32_t guard_start HF_ATTR_UNUSED) {
+    /* No-op by default */
+}
+
+__attribute__((weak))
+void hfuzz_metrics_log_full_coverage_report(const uint8_t* guard_map HF_ATTR_UNUSED,
+                                             uint64_t guard_count HF_ATTR_UNUSED,
+                                             const char* output_path HF_ATTR_UNUSED) {
+    /* No-op by default */
+}
+

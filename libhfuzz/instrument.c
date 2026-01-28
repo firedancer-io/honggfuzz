@@ -25,6 +25,7 @@
 #include "libhfcommon/files.h"
 #include "libhfcommon/log.h"
 #include "libhfcommon/util.h"
+#include "hfuzz_metrics.h"
 
 /* Cygwin doesn't support this */
 #if !defined(__CYGWIN__)
@@ -926,6 +927,9 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
         
         LOG_I("PC-Guard module registration: %p-%p (count:%zu) at guard %u in slot %u", 
             start, stop, guardCount, baseGuard, slot);
+        
+        /* Notify metrics of new module (optional - weak symbol, no-op if not overridden) */
+        hfuzz_metrics_register_module(libName, baseGuard, (uint32_t)guardCount);
     } else {
         moduleSpinlockRelease();
         LOG_F("No free tracking slots for module %s (all %u slots in use). "

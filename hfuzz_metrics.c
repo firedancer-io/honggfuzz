@@ -54,3 +54,21 @@ void hfuzz_metrics_log_coverage(uint64_t new_pcs HF_ATTR_UNUSED,
     /* No-op by default */
 }
 
+__attribute__((weak))
+void hfuzz_metrics_set_coverage_denominator(uint64_t total_guards HF_ATTR_UNUSED) {
+    /* No-op by default */
+}
+
+__attribute__((weak))
+void hfuzz_metrics_log_detailed_coverage(const uint8_t* guard_map HF_ATTR_UNUSED,
+                                          uint64_t guard_count HF_ATTR_UNUSED) {
+    /* No-op by default */
+}
+
+__attribute__((weak))
+void hfuzz_metrics_register_module(const char* module_name HF_ATTR_UNUSED,
+                                    uint32_t guard_start HF_ATTR_UNUSED,
+                                    uint32_t guard_count HF_ATTR_UNUSED) {
+    /* No-op by default */
+}
+

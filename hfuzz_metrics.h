@@ -86,6 +86,39 @@ void hfuzz_metrics_log_coverage(uint64_t new_pcs,
                                  uint64_t total_cmp,
                                  size_t corpus_count);
 
+/*
+ * Set the coverage denominator (total possible coverage points).
+ * Called during initialization after PC guards are set up.
+ *
+ * total_guards: total number of PC guards instrumented
+ */
+void hfuzz_metrics_set_coverage_denominator(uint64_t total_guards);
+
+/*
+ * Log detailed coverage map for source-level analysis.
+ * Called periodically to enable file/function/line coverage tracking.
+ *
+ * guard_map: pointer to the PC guard hit count map
+ * guard_count: number of guards in the map
+ * 
+ * The implementation can iterate the map to count covered guards
+ * and use symbolization to map to source locations.
+ */
+void hfuzz_metrics_log_detailed_coverage(const uint8_t* guard_map, 
+                                          uint64_t guard_count);
+
+/*
+ * Notify metrics of a newly instrumented module for coverage tracking.
+ * Called from __sanitizer_cov_trace_pc_guard_init for each module.
+ *
+ * module_name: path/name of the instrumented module
+ * guard_start: starting guard number for this module
+ * guard_count: number of guards in this module
+ */
+void hfuzz_metrics_register_module(const char* module_name,
+                                    uint32_t guard_start,
+                                    uint32_t guard_count);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

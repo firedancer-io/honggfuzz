@@ -115,6 +115,13 @@ static void fuzz_setDynamicMainState(run_t* run) {
         return;
     }
 
+    if (run->global->cfg.replay) {
+        LOG_I("Entering replay mode: processing all %zu corpus files without mutation",
+              run->global->io.fileCnt);
+        ATOMIC_SET(run->global->feedback.state, _HF_STATE_REPLAY);
+        return;
+    }
+
     /*
      * If the initial fuzzing yielded no useful coverage, just add a single empty file to the
      * dynamic corpus, so the dynamic phase doesn't fail because of lack of useful inputs
@@ -191,13 +198,14 @@ static void fuzz_perfFeedback(run_t* run) {
         wmb();
     };
 
-    uint64_t softNewPC         = 0;
-    uint64_t softCurPC         = 0;
-    uint64_t softNewEdge       = 0;
-    uint64_t softCurEdge       = 0;
-    uint64_t softNewCmp        = 0;
-    uint64_t softCurCmp        = 0;
-    bool     softNewStackDepth = false;
+    uint64_t softNewPC           = 0;
+    uint64_t softCurPC           = 0;
+    uint64_t softNewEdge         = 0;
+    uint64_t softCurEdge         = 0;
+    uint64_t softNewCmp          = 0;  /* CMP solving: trace_cmp bit improvements */
+    uint64_t softCurCmp          = 0;
+    uint64_t softNewEdgeBucket   = 0;  /* Edge bucket increases (unbounded, not for corpus) */
+    bool     softNewStackDepth   = false;
 
     if (run->global->feedback.dynFileMethod & _HF_DYNFILE_SOFT) {
         softNewPC = ATOMIC_GET(run->global->feedback.covFeedbackMap->pidNewPC[run->fuzzNo].val);
@@ -215,6 +223,11 @@ static void fuzz_perfFeedback(run_t* run) {
         ATOMIC_CLEAR(run->global->feedback.covFeedbackMap->pidNewCmp[run->fuzzNo].val);
         softCurCmp = ATOMIC_GET(run->global->feedback.covFeedbackMap->pidTotalCmp[run->fuzzNo].val);
         ATOMIC_CLEAR(run->global->feedback.covFeedbackMap->pidTotalCmp[run->fuzzNo].val);
+
+        /* Edge bucket increases - tracked separately, not used for corpus decisions */
+        softNewEdgeBucket = ATOMIC_GET(run->global->feedback.covFeedbackMap->pidEdgeBucketInc[run->fuzzNo].val);
+        ATOMIC_CLEAR(run->global->feedback.covFeedbackMap->pidEdgeBucketInc[run->fuzzNo].val);
+
         ATOMIC_CLEAR(run->global->feedback.covFeedbackMap->pidLastStackDepth[run->fuzzNo].val);
 
         softNewStackDepth = ATOMIC_XCHG(
@@ -226,10 +239,25 @@ static void fuzz_perfFeedback(run_t* run) {
     int64_t diff0 = (int64_t)run->global->feedback.hwCnts.cpuInstrCnt - run->hwCnts.cpuInstrCnt;
     int64_t diff1 = (int64_t)run->global->feedback.hwCnts.cpuBranchCnt - run->hwCnts.cpuBranchCnt;
 
-    /* Any increase in coverage (edge, pc, cmp, hw, stack) counters forces adding input to the
-     * corpus */
-    if (run->hwCnts.newBBCnt > 0 || softNewPC > 0 || softNewEdge > 0 || softNewCmp > 0 ||
-        softNewStackDepth || diff0 < 0 || diff1 < 0) {
+    /* Any increase in coverage (edge, pc, cmp, edge-bucket, hw, stack) counters forces adding
+     * input to the corpus. Edge bucket increases are now bounded by saturation threshold. */
+    bool hasNewCoverage = (run->hwCnts.newBBCnt > 0 || softNewPC > 0 || softNewEdge > 0 || 
+                           softNewCmp > 0 || softNewEdgeBucket > 0 || softNewStackDepth || 
+                           diff0 < 0 || diff1 < 0);
+    
+    /* Track mutation effectiveness (sampled: every 64th mutation to reduce overhead) */
+    if ((ATOMIC_GET(run->global->cnts.mutationsCnt) & 0x3F) == 0) {
+        if (hasNewCoverage) {
+            ATOMIC_POST_INC(run->global->cnts.mutationsWithNewCov);
+        } else {
+            ATOMIC_POST_INC(run->global->cnts.mutationsWithoutNewCov);
+        }
+    }
+    
+    if (hasNewCoverage) {
+        /* Update last coverage time for plateau detection */
+        ATOMIC_SET(run->global->cnts.lastNewCovTime, (uint64_t)time(NULL));
+        
         if (diff0 < 0) {
             run->global->feedback.hwCnts.cpuInstrCnt = run->hwCnts.cpuInstrCnt;
         }
@@ -240,15 +268,22 @@ static void fuzz_perfFeedback(run_t* run) {
         run->global->feedback.hwCnts.softCntPc += softNewPC;
         run->global->feedback.hwCnts.softCntEdge += softNewEdge;
         run->global->feedback.hwCnts.softCntCmp += softNewCmp;
+        run->global->feedback.hwCnts.softCntEdgeBucket += softNewEdgeBucket;
 
-        LOG_I("Sz:%zu Tm:%" _HF_NONMON_SEP PRIu64 "us (i/b/h/e/p/c) New:%" PRIu64 "/%" PRIu64
-              "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 ", Cur:%" PRIu64 "/%" PRIu64
-              "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64,
+        /* Log format: (i/b/h/e/p/c/f) where:
+         *   c = CMP solving (trace_cmp bit improvements)
+         *   f = edge frequency bucket increases (unbounded, not for corpus)
+         */
+        LOG_I("Sz:%zu Tm:%" _HF_NONMON_SEP PRIu64 "us (i/b/h/e/p/c/f) New:%" PRIu64 "/%" PRIu64
+              "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64
+              ", Cur:%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64,
             run->dynfile->size, util_timeNowUSecs() - run->timeStartedUSecs,
             run->hwCnts.cpuInstrCnt, run->hwCnts.cpuBranchCnt, run->hwCnts.newBBCnt, softNewEdge,
-            softNewPC, softNewCmp, run->hwCnts.cpuInstrCnt, run->hwCnts.cpuBranchCnt,
+            softNewPC, softNewCmp, softNewEdgeBucket,
+            run->hwCnts.cpuInstrCnt, run->hwCnts.cpuBranchCnt,
             run->global->feedback.hwCnts.bbCnt, run->global->feedback.hwCnts.softCntEdge,
-            run->global->feedback.hwCnts.softCntPc, run->global->feedback.hwCnts.softCntCmp);
+            run->global->feedback.hwCnts.softCntPc, run->global->feedback.hwCnts.softCntCmp,
+            run->global->feedback.hwCnts.softCntEdgeBucket);
 
         if (run->global->io.statsFileName) {
             const time_t curr_sec      = time(NULL);
@@ -292,6 +327,12 @@ static void fuzz_perfFeedback(run_t* run) {
 
         /* Track mutation depth */
         run->dynfile->depth = run->dynfile->src ? run->dynfile->src->depth + 1 : 0;
+        
+        /* Track max corpus depth for health monitoring */
+        uint32_t curMaxDepth = ATOMIC_GET(run->global->cnts.corpusMaxDepth);
+        if (run->dynfile->depth > curMaxDepth) {
+            ATOMIC_SET(run->global->cnts.corpusMaxDepth, run->dynfile->depth);
+        }
         run->dynfile->stackDepth =
             ATOMIC_GET(run->global->feedback.covFeedbackMap->pidLastStackDepth[run->fuzzNo].val);
 
@@ -443,6 +484,16 @@ static bool fuzz_fetchInput(run_t* run) {
         return false;
     }
 
+    if (fuzz_getState(run->global) == _HF_STATE_REPLAY) {
+        /* Replay mode: iterate corpus files without mutation, exit when done */
+        run->mutationsPerRun = 0U;
+        if (input_prepareStaticFile(run, /* rewind= */ false, /* mangle= */ false)) {
+            return true;
+        }
+        /* No more files to process */
+        return false;
+    }
+
     if (fuzz_getState(run->global) == _HF_STATE_DYNAMIC_MAIN) {
         if (run->global->exe.externalCommand) {
             if (!input_prepareExternalFile(run)) {
@@ -514,6 +565,10 @@ static void fuzz_fuzzLoop(run_t* run) {
             fuzz_setTerminating();
             return;
         }
+        if (run->global->cfg.replay && fuzz_getState(run->global) == _HF_STATE_REPLAY) {
+            fuzz_setTerminating();
+            return;
+        }
         LOG_F("Cound't prepare input for fuzzing");
     }
     if (!subproc_Run(run)) {
@@ -524,6 +579,24 @@ static void fuzz_fuzzLoop(run_t* run) {
     {
         uint64_t exec_time_us = util_timeNowUSecs() - run->timeStartedUSecs;
         hfuzz_metrics_log_execution(run->dynfile->size, exec_time_us);
+        
+        /* Track execution time statistics (sampled: every 256th execution) */
+        if (likely((ATOMIC_GET(run->global->cnts.mutationsCnt) & 0xFF) == 0)) {
+            ATOMIC_POST_ADD(run->global->cnts.execTimeSum, exec_time_us);
+            uint64_t curMax = ATOMIC_GET(run->global->cnts.execTimeMax);
+            if (exec_time_us > curMax) {
+                ATOMIC_SET(run->global->cnts.execTimeMax, exec_time_us);
+            }
+            /* Track slow executions: >10x the baseline (1ms = 1000us) */
+            uint64_t avgTime = ATOMIC_GET(run->global->cnts.execTimeSum);
+            uint64_t count = ATOMIC_GET(run->global->cnts.mutationsCnt) >> 8;
+            if (count > 0) {
+                uint64_t threshold = (avgTime / count) * 10;
+                if (exec_time_us > threshold && threshold > 1000) {
+                    ATOMIC_POST_INC(run->global->cnts.execTimeSlowCnt);
+                }
+            }
+        }
     }
 
     if (run->global->feedback.dynFileMethod != _HF_DYNFILE_NONE) {
@@ -694,7 +767,13 @@ void fuzz_threadsStart(honggfuzz_t* hfuzz) {
         LOG_F("Couldn't prepare sanitizer options");
     }
 
-    if (hfuzz->socketFuzzer.enabled) {
+    if (hfuzz->cfg.replay) {
+        /* Replay mode: skip dry-run, go straight to replay state */
+        LOG_I("Entering replay mode: processing all corpus files without mutation");
+        hfuzz->feedback.state       = _HF_STATE_DYNAMIC_DRY_RUN;  /* Start in dry-run to iterate corpus */
+        hfuzz->mutate.mutationsPerRun = 0;  /* No mutations */
+        hfuzz->feedback.dynFileMethod = _HF_DYNFILE_NONE;  /* No coverage feedback */
+    } else if (hfuzz->socketFuzzer.enabled) {
         /* Don't do dry run with socketFuzzer */
         LOG_I("Entering phase - Feedback Driven Mode (SocketFuzzer)");
         hfuzz->feedback.state = _HF_STATE_DYNAMIC_MAIN;
@@ -704,6 +783,18 @@ void fuzz_threadsStart(honggfuzz_t* hfuzz) {
     } else {
         LOG_I("Entering phase: Static");
         hfuzz->feedback.state = _HF_STATE_STATIC;
+    }
+
+    /* Register coverage feedback pointers for live monitoring (starts background thread) */
+    if (hfuzz->feedback.covFeedbackMap) {
+        LOG_I("Registering coverage feedback (map=%p, guardNb=%lu)", 
+              (void*)hfuzz->feedback.covFeedbackMap->pcGuardMap,
+              (unsigned long)hfuzz->feedback.covFeedbackMap->guardNb);
+        hfuzz_metrics_register_coverage_feedback(
+            hfuzz->feedback.covFeedbackMap->pcGuardMap,
+            (void*)&hfuzz->feedback.covFeedbackMap->guardNb);
+    } else {
+        LOG_W("covFeedbackMap is NULL, cannot register coverage feedback");
     }
 
     for (size_t i = 0; i < hfuzz->threads.threadsMax; i++) {

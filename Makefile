@@ -201,6 +201,8 @@ GIT_BUILDINFO_H := git_buildinfo.h
 
 LHFUZZ_SRCS := $(sort $(wildcard libhfuzz/*.c))
 LHFUZZ_OBJS := $(LHFUZZ_SRCS:.c=.o)
+# Include hfuzz_metrics.o in libhfuzz.a so instrument.o's references resolve
+LHFUZZ_OBJS += hfuzz_metrics.o
 LHFUZZ_ARCH := libhfuzz/libhfuzz.a
 LHFUZZ_SHARED := libhfuzz/libhfuzz.so
 HFUZZ_INC ?= $(shell pwd)

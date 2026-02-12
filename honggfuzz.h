@@ -490,6 +490,28 @@ typedef struct {
     hwcnt_t      hwCnts;
     uint8_t      mutationTiers; /* Bitmap of mutation tiers used this run */
 
+    /* Deferred metrics snapshot: filled under dynfileq rwlock,
+       flushed after release to avoid blocking all fuzzer threads on
+       ClickHouse network I/O during startup. */
+    bool         pendingStatsLog;
+    struct {
+        uint64_t mutationsCnt, softCntPc, softCntEdge;
+        uint64_t total;
+        float    repeatPct, highPct, lowPct, phase2Pct;
+        uint64_t avgEnergy;
+        float    avgIters;
+        uint64_t maxIters, eMin, eMax;
+        uint64_t noveltyDecay, freshBoost, stalePenalty, diminishing, depthPenalty;
+        uint64_t corpusSize, globalAvgEnergy;
+        uint64_t avgExecTime, execTimeMax, execTimeSlow;
+        float    hitRate;
+        uint64_t plateauSecs, queueWraps;
+        uint32_t maxDepth;
+        uint64_t uniqueCrashes, totalCrashes, timeouts;
+        uint64_t fertileBoosts, saturatedLineages, exploreSelects;
+        uint64_t secsSinceCrash, stagnationSecs, corpusGrowth;
+    } statsSnapshot;
+
     struct {
         /* For Linux code */
         uint8_t* perfMmapBuf;

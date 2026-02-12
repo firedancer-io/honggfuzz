@@ -794,51 +794,45 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                           (size_t)stagnationHours, (size_t)stagnationMins,
                           corpusGrowth);
                     
-                    /* Log comprehensive stats to metrics bridge for ClickHouse */
-                    hfuzz_metrics_log_stats(
-                        /* EXECUTION COUNT (for timeseries rate calculation) */
-                        (uint64_t)ATOMIC_GET(hfuzz->cnts.mutationsCnt),
-                        /* COVERAGE METRICS (for complete timeseries data) */
-                        (uint64_t)ATOMIC_GET(hfuzz->feedback.hwCnts.softCntPc),
-                        (uint64_t)ATOMIC_GET(hfuzz->feedback.hwCnts.softCntEdge),
-                        /* SCHED-STATS */
-                        (uint64_t)total,
-                        (float)((double)repeat * 100.0 / total),
-                        (float)((double)high * 100.0 / total),
-                        (float)((double)low * 100.0 / total),
-                        (float)((double)p2 * 100.0 / total),
-                        nonRepeat > 0 ? (uint64_t)(esum / nonRepeat) : 0,
-                        nonRepeat > 0 ? (float)((double)iters / nonRepeat) : 0.0f,
-                        (uint64_t)maxIters,
-                        (uint64_t)eMin,
-                        (uint64_t)eMax,
-                        /* DECAY-STATS */
-                        (uint64_t)noveltyDecay,
-                        (uint64_t)freshBoost,
-                        (uint64_t)stalePenalty,
-                        (uint64_t)diminishing,
-                        (uint64_t)depthPenalty,
-                        (uint64_t)currentCorpusSize,
-                        eCount > 0 ? (uint64_t)(eTotal / eCount) : 0,
-                        /* HEALTH-STATS */
-                        (uint64_t)avgExecTime,
-                        (uint64_t)execTimeMax,
-                        (uint64_t)execTimeSlow,
-                        (float)hitRate,
-                        (uint64_t)plateauSecs,
-                        (uint64_t)queueWraps,
-                        maxDepth,
-                        /* DIFF-FUZZ-STATS */
-                        (uint64_t)uniqueCrashes,
-                        (uint64_t)totalCrashes,
-                        (uint64_t)timeouts,
-                        (uint64_t)fertileBoosts,
-                        (uint64_t)saturatedLineages,
-                        (uint64_t)exploreSelects,
-                        (uint64_t)secsSinceCrash,
-                        (uint64_t)plateauSecs,
-                        (uint64_t)corpusGrowth
-                    );
+                    /* Defer the metrics bridge call until after the rwlock is released.
+                     * All values are already captured in local variables from ATOMIC_GETs. */
+                    run->pendingStatsLog = true;
+                    run->statsSnapshot.mutationsCnt        = (uint64_t)ATOMIC_GET(hfuzz->cnts.mutationsCnt);
+                    run->statsSnapshot.softCntPc           = (uint64_t)ATOMIC_GET(hfuzz->feedback.hwCnts.softCntPc);
+                    run->statsSnapshot.softCntEdge         = (uint64_t)ATOMIC_GET(hfuzz->feedback.hwCnts.softCntEdge);
+                    run->statsSnapshot.total               = (uint64_t)total;
+                    run->statsSnapshot.repeatPct           = (float)((double)repeat * 100.0 / total);
+                    run->statsSnapshot.highPct             = (float)((double)high * 100.0 / total);
+                    run->statsSnapshot.lowPct              = (float)((double)low * 100.0 / total);
+                    run->statsSnapshot.phase2Pct           = (float)((double)p2 * 100.0 / total);
+                    run->statsSnapshot.avgEnergy           = nonRepeat > 0 ? (uint64_t)(esum / nonRepeat) : 0;
+                    run->statsSnapshot.avgIters            = nonRepeat > 0 ? (float)((double)iters / nonRepeat) : 0.0f;
+                    run->statsSnapshot.maxIters            = (uint64_t)maxIters;
+                    run->statsSnapshot.eMin                = (uint64_t)eMin;
+                    run->statsSnapshot.eMax                = (uint64_t)eMax;
+                    run->statsSnapshot.noveltyDecay        = (uint64_t)noveltyDecay;
+                    run->statsSnapshot.freshBoost          = (uint64_t)freshBoost;
+                    run->statsSnapshot.stalePenalty         = (uint64_t)stalePenalty;
+                    run->statsSnapshot.diminishing         = (uint64_t)diminishing;
+                    run->statsSnapshot.depthPenalty         = (uint64_t)depthPenalty;
+                    run->statsSnapshot.corpusSize           = (uint64_t)currentCorpusSize;
+                    run->statsSnapshot.globalAvgEnergy     = eCount > 0 ? (uint64_t)(eTotal / eCount) : 0;
+                    run->statsSnapshot.avgExecTime         = (uint64_t)avgExecTime;
+                    run->statsSnapshot.execTimeMax         = (uint64_t)execTimeMax;
+                    run->statsSnapshot.execTimeSlow        = (uint64_t)execTimeSlow;
+                    run->statsSnapshot.hitRate             = (float)hitRate;
+                    run->statsSnapshot.plateauSecs         = (uint64_t)plateauSecs;
+                    run->statsSnapshot.queueWraps          = (uint64_t)queueWraps;
+                    run->statsSnapshot.maxDepth            = maxDepth;
+                    run->statsSnapshot.uniqueCrashes       = (uint64_t)uniqueCrashes;
+                    run->statsSnapshot.totalCrashes        = (uint64_t)totalCrashes;
+                    run->statsSnapshot.timeouts            = (uint64_t)timeouts;
+                    run->statsSnapshot.fertileBoosts       = (uint64_t)fertileBoosts;
+                    run->statsSnapshot.saturatedLineages   = (uint64_t)saturatedLineages;
+                    run->statsSnapshot.exploreSelects      = (uint64_t)exploreSelects;
+                    run->statsSnapshot.secsSinceCrash      = (uint64_t)secsSinceCrash;
+                    run->statsSnapshot.stagnationSecs      = (uint64_t)plateauSecs;
+                    run->statsSnapshot.corpusGrowth        = (uint64_t)corpusGrowth;
                 }
             }
         }
@@ -879,6 +873,25 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
 
             run->triesLeft = 0;
         }
+    }
+
+    /* Flush deferred metrics log AFTER releasing the rwlock to avoid blocking
+     * all fuzzer threads on ClickHouse network I/O. */
+    if (run->pendingStatsLog) {
+        run->pendingStatsLog = false;
+        const typeof(run->statsSnapshot)* s = &run->statsSnapshot;
+        hfuzz_metrics_log_stats(
+            s->mutationsCnt, s->softCntPc, s->softCntEdge,
+            s->total, s->repeatPct, s->highPct, s->lowPct, s->phase2Pct,
+            s->avgEnergy, s->avgIters, s->maxIters, s->eMin, s->eMax,
+            s->noveltyDecay, s->freshBoost, s->stalePenalty, s->diminishing,
+            s->depthPenalty, s->corpusSize, s->globalAvgEnergy,
+            s->avgExecTime, s->execTimeMax, s->execTimeSlow, s->hitRate,
+            s->plateauSecs, s->queueWraps, s->maxDepth,
+            s->uniqueCrashes, s->totalCrashes, s->timeouts,
+            s->fertileBoosts, s->saturatedLineages, s->exploreSelects,
+            s->secsSinceCrash, s->stagnationSecs, s->corpusGrowth
+        );
     }
 
     /* Copy data outside of the lock - inputs are immutable once in the queue */

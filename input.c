@@ -879,7 +879,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
      * all fuzzer threads on ClickHouse network I/O. */
     if (run->pendingStatsLog) {
         run->pendingStatsLog = false;
-        const typeof(run->statsSnapshot)* s = &run->statsSnapshot;
+        const __typeof__(run->statsSnapshot)* s = &run->statsSnapshot;
         hfuzz_metrics_log_stats(
             s->mutationsCnt, s->softCntPc, s->softCntEdge,
             s->total, s->repeatPct, s->highPct, s->lowPct, s->phase2Pct,

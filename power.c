@@ -270,8 +270,8 @@ uint64_t power_calculateEnergy(run_t* run, dynfile_t* dynfile) {
 
     /*
      * Mismatch fertility with saturation detection for differential fuzzing:
-     * - mismatchRefs: descendants caused NEW UNIQUE mismatches → boost
-     * - dupCrashRefs: descendants caused DUPLICATE crashes → penalize
+     * - mismatchRefs: descendants caused NEW UNIQUE mismatches => boost
+     * - dupCrashRefs: descendants caused DUPLICATE crashes => penalize
      *
      * This prevents getting stuck finding the same mismatch repeatedly.
      * Only boost if we're finding more unique crashes than duplicates.

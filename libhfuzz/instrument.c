@@ -958,8 +958,11 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
 /* Logarithmic edge bucket counting for corpus decisions.
  * Higher bucket transitions are counted with decreasing probability.
  * Uses guard value for deterministic selection: count if (guard % (oldval + 1)) == 0
- * This gives: 100% for 0→1, 50% for 1→2, 33% for 2→4, 20% for 4→8, etc.
+ * This gives: 100% for 0=>1, 50% for 1=>2, 33% for 2=>4, 20% for 4=>8, etc.
  * Result: logarithmic expected corpus additions per edge, never fully ignoring transitions.
+ *
+ * When disabled (set to 0), falls back to the original behavior: every edge bucket
+ * transition unconditionally increments pidNewCmp (unbounded, can dominate corpus).
  */
 #define _HF_EDGE_BUCKET_LOG_COUNTING 1
 
@@ -1052,11 +1055,15 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard(uint32_t* guard_ptr)
                 ATOMIC_PRE_INC(globalCovFeedback->pidRareEdgeCnt[my_thread_no].val);
             }
         } else if (oldval < newval) {
+#if _HF_EDGE_BUCKET_LOG_COUNTING
             /* Logarithmic edge bucket counting: probability = 1/(oldval+1)
              * Uses guard value for deterministic selection */
             if ((guard % (oldval + 1)) == 0) {
                 ATOMIC_PRE_INC(globalCovFeedback->pidEdgeBucketInc[my_thread_no].val);
             }
+#else
+            ATOMIC_PRE_INC(globalCovFeedback->pidNewCmp[my_thread_no].val);
+#endif
         }
     }
 }
@@ -1098,11 +1105,15 @@ void instrument8BitCountersCount(void) {
                         ATOMIC_PRE_INC(globalCovFeedback->pidRareEdgeCnt[my_thread_no].val);
                     }
                 } else if (oldval < newval) {
+#if _HF_EDGE_BUCKET_LOG_COUNTING
                     /* Logarithmic edge bucket counting: probability = 1/(oldval+1)
                      * Uses guard value for deterministic selection */
                     if ((guard % (oldval + 1)) == 0) {
                         ATOMIC_PRE_INC(globalCovFeedback->pidEdgeBucketInc[my_thread_no].val);
                     }
+#else
+                    ATOMIC_PRE_INC(globalCovFeedback->pidNewCmp[my_thread_no].val);
+#endif
                 }
             }
 

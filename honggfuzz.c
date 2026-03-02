@@ -272,12 +272,13 @@ static uint8_t mainThreadLoop(honggfuzz_t* hfuzz) {
     setupSignalsMainThread();
     setupMainThreadTimer();
 
-    /* Total threads actually started — may exceed current threadsMax when dry
-     * run boost was activated, because threadsMax is restored to the smaller
-     * configured value after dry run completes. */
+#ifdef HFUZZ_DRY_RUN_BOOST
     const size_t threadsTotal = hfuzz->threads.threadsDryRunMax > 0
                               ? hfuzz->threads.threadsDryRunMax
                               : hfuzz->threads.threadsMax;
+#else
+    const size_t threadsTotal = hfuzz->threads.threadsMax;
+#endif
 
     uint64_t dynamicQueuePollTime = time(NULL);
     for (;;) {

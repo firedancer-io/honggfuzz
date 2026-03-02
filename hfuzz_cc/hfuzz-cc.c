@@ -606,7 +606,7 @@ static int ldMode(int argc, char** argv) {
      * symbols resolved via LD_PRELOAD at runtime (e.g. firedancer's .so)
      */
     bool skipLibhfuzz = getenv("HFUZZ_SKIP_LIBHFUZZ") != NULL;
-    
+
     if (!skipLibhfuzz) {
         /* Ensure to link libhfuzz to the fuzz test executable*/
         if (isExecutableBuild(argc, argv)) {

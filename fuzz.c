@@ -151,6 +151,15 @@ static void fuzz_setDynamicMainState(run_t* run) {
         run->global->mutate.maxInputSz = newsz;
     }
 
+    /* Restore thread count if it was boosted for dry run.
+     * Extra threads will see the state change and exit via fuzz_threadNew's loop. */
+    if (run->global->threads.threadsDryRunMax > 0
+        && run->global->threads.threadsConfigured < run->global->threads.threadsMax) {
+        LOG_I("Restoring thread count %zu -> %zu (dry run boost complete)",
+              run->global->threads.threadsMax, run->global->threads.threadsConfigured);
+        ATOMIC_SET(run->global->threads.threadsMax, run->global->threads.threadsConfigured);
+    }
+
     LOG_I("Entering phase 3/3: Dynamic Main (Feedback Driven Mode)");
     ATOMIC_SET(run->global->feedback.state, _HF_STATE_DYNAMIC_MAIN);
 }
@@ -339,7 +348,7 @@ static void fuzz_perfFeedback(run_t* run) {
             run->global->feedback.hwCnts.softCntEdge,
             run->global->feedback.hwCnts.softCntCmp,
             run->global->io.dynfileqCnt);
-        
+
         /* Log detailed coverage map for source-level analysis */
         uint64_t total_guards = atomic_load_explicit(&run->global->feedback.covFeedbackMap->guardNb, memory_order_relaxed);
         hfuzz_metrics_log_detailed_coverage(
@@ -426,6 +435,73 @@ static bool fuzz_runVerifier(run_t* run) {
 }
 
 static bool fuzz_fetchInput(run_t* run) {
+    /* Periodic stats flush for non-dynamic states (dry run, static, minimize).
+     * Once in DYNAMIC_MAIN, input_prepareDynamicInput handles stats with
+     * full sched/decay/health counters — so we stop here to avoid
+     * overwriting those with zeroes. */
+    {
+        static time_t lastStatsTime = 0;
+        time_t now = time(NULL);
+        if (now - lastStatsTime >= 15
+            && fuzz_getState(run->global) != _HF_STATE_DYNAMIC_MAIN) {
+            lastStatsTime = now;
+            honggfuzz_t* hfuzz = run->global;
+            uint64_t execs = ATOMIC_GET(hfuzz->cnts.mutationsCnt);
+            uint64_t pcs   = ATOMIC_GET(hfuzz->feedback.hwCnts.softCntPc);
+            uint64_t edges = ATOMIC_GET(hfuzz->feedback.hwCnts.softCntEdge);
+            uint64_t corpus = ATOMIC_GET(hfuzz->io.dynfileqCnt);
+            uint64_t crashes = ATOMIC_GET(hfuzz->cnts.crashesCnt);
+            uint64_t uniqueCrashes = ATOMIC_GET(hfuzz->cnts.uniqueCrashesCnt);
+            fuzzState_t st = fuzz_getState(hfuzz);
+            const char* state_str = (st == _HF_STATE_DYNAMIC_DRY_RUN) ? "dry_run"
+                                  : (st == _HF_STATE_DYNAMIC_MAIN)    ? "dynamic"
+                                  : (st == _HF_STATE_DYNAMIC_MINIMIZE) ? "minimize"
+                                  :                                      "static";
+
+            uint64_t timeouts = ATOMIC_GET(hfuzz->cnts.timeoutedCnt);
+            uint64_t execTimeSum = ATOMIC_GET(hfuzz->cnts.execTimeSum);
+            uint64_t execTimeMax = ATOMIC_GET(hfuzz->cnts.execTimeMax);
+            uint64_t execTimeSlow = ATOMIC_GET(hfuzz->cnts.execTimeSlowCnt);
+            uint64_t queueWraps = ATOMIC_GET(hfuzz->cnts.corpusQueueWraps);
+            uint32_t maxDepth = ATOMIC_GET(hfuzz->cnts.corpusMaxDepth);
+            uint64_t lastCovTime = ATOMIC_GET(hfuzz->timing.lastCovUpdate);
+            uint64_t plateauSecs = lastCovTime > 0 ? (uint64_t)(now - (time_t)lastCovTime) : 0;
+            uint64_t sampledCount = execs >> 8;
+            uint64_t avgExecTime = sampledCount > 0 ? (execTimeSum / sampledCount) : 0;
+
+            uint64_t testedFiles = ATOMIC_GET(hfuzz->io.testedFileCnt);
+            uint64_t totalFiles = hfuzz->io.fileCnt;
+            float dryRunPct = totalFiles > 0 ? (float)testedFiles * 100.0f / (float)totalFiles : 0.0f;
+
+            fprintf(stderr, "[hfuzz_stats] state=%s execs=%zu pcs=%zu edges=%zu "
+                    "corpus=%zu crashes=%zu/%zu threads=%zu",
+                    state_str, (size_t)execs, (size_t)pcs, (size_t)edges,
+                    (size_t)corpus, (size_t)uniqueCrashes, (size_t)crashes,
+                    (size_t)hfuzz->threads.threadsMax);
+            if (st == _HF_STATE_DYNAMIC_DRY_RUN) {
+                fprintf(stderr, " dry_run_progress=%zu/%zu (%.1f%%)",
+                        (size_t)testedFiles, (size_t)totalFiles, (double)dryRunPct);
+            }
+            fprintf(stderr, "\n");
+
+            if (execs > 0) {
+                hfuzz_metrics_log_stats(
+                    execs, pcs, edges,
+                    /* sched (not available outside dynamic mode) */
+                    0, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0.0f, 0, 0, 0,
+                    /* decay (not available outside dynamic mode) */
+                    0, 0, 0, 0, 0, corpus, 0,
+                    /* health */
+                    avgExecTime, execTimeMax, execTimeSlow, 0.0f,
+                    plateauSecs, queueWraps, maxDepth,
+                    /* diff-fuzz */
+                    uniqueCrashes, crashes, timeouts, 0, 0, 0, 0, 0, 0,
+                    state_str, testedFiles, totalFiles
+                );
+            }
+        }
+    }
+
     {
         fuzzState_t st = fuzz_getState(run->global);
         if (st == _HF_STATE_DYNAMIC_DRY_RUN) {
@@ -669,6 +745,14 @@ static void* fuzz_threadNew(void* arg) {
             break;
         }
 
+        /* Exit surplus threads after dry run boost ends */
+        if (run.global->threads.threadsDryRunMax > 0
+            && (size_t)fuzzNo >= ATOMIC_GET(run.global->threads.threadsMax)) {
+            LOG_I("Thread #%d exiting (dry run boost complete, threadsMax=%zu)",
+                  fuzzNo, ATOMIC_GET(run.global->threads.threadsMax));
+            break;
+        }
+
         if (run.global->cfg.exitUponCrash && ATOMIC_GET(run.global->cnts.crashesCnt) > 0) {
             LOG_I("Seen a crash. Terminating all fuzzing threads");
             fuzz_setTerminating();
@@ -683,7 +767,11 @@ static void* fuzz_threadNew(void* arg) {
     }
 
     size_t j = ATOMIC_PRE_INC(run.global->threads.threadsFinished);
-    LOG_I("Terminating thread no. #%" PRId32 ", left: %zu", fuzzNo, hfuzz->threads.threadsMax - j);
+    size_t total = hfuzz->threads.threadsDryRunMax > 0
+                 ? hfuzz->threads.threadsDryRunMax
+                 : hfuzz->threads.threadsMax;
+    LOG_I("Terminating thread no. #%" PRId32 ", left: %zu", fuzzNo,
+          j < total ? total - j : 0);
     return NULL;
 }
 
@@ -708,6 +796,25 @@ void fuzz_threadsStart(honggfuzz_t* hfuzz) {
     } else if (hfuzz->feedback.dynFileMethod != _HF_DYNFILE_NONE) {
         LOG_I("Entering phase 1/3: Dry Run");
         hfuzz->feedback.state = _HF_STATE_DYNAMIC_DRY_RUN;
+
+        /* Boost thread count for dry run — replaying corpus files is embarrassingly
+         * parallel and I/O bound.  Use all available CPUs to avoid multi-hour
+         * dry runs on large corpora (161k+ files) with low thread allocations.
+         * The configured thread count is restored when entering dynamic mode. */
+        hfuzz->threads.threadsConfigured = hfuzz->threads.threadsMax;
+        long ncpus = sysconf(_SC_NPROCESSORS_ONLN);
+        if (ncpus > 0 && (size_t)ncpus > hfuzz->threads.threadsMax && !hfuzz->cfg.minimize) {
+            size_t boosted = (size_t)ncpus;
+            if (boosted >= _HF_THREAD_MAX) {
+                boosted = _HF_THREAD_MAX - 1;
+                LOG_W("Clamping dry run thread boost to %zu (_HF_THREAD_MAX=%u)",
+                      boosted, _HF_THREAD_MAX);
+            }
+            hfuzz->threads.threadsDryRunMax = boosted;
+            LOG_I("Dry run: boosting threads %zu -> %zu (all CPUs)",
+                  hfuzz->threads.threadsConfigured, hfuzz->threads.threadsDryRunMax);
+            hfuzz->threads.threadsMax = hfuzz->threads.threadsDryRunMax;
+        }
     } else {
         LOG_I("Entering phase: Static");
         hfuzz->feedback.state = _HF_STATE_STATIC;

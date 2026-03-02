@@ -34,6 +34,7 @@
 #include <sys/mman.h>
 #include <sys/queue.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "dict.h"
@@ -478,6 +479,8 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
 
     {
         honggfuzz_t* hfuzz = run->global;  /* Cache global pointer */
+        struct timespec lock_start;
+        clock_gettime(CLOCK_MONOTONIC, &lock_start);
         MX_SCOPED_RWLOCK_WRITE(&hfuzz->mutex.dynfileq);
 
         /*
@@ -493,8 +496,6 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         const unsigned phase2Limit = 32;   /* After phase1, scan for top candidates */
         time_t now = time(NULL);
 
-        /* Instrumentation: selection statistics (sampled every 10000 selections) */
-        static uint64_t selectionCount = 0;
         static uint64_t phase1HighEnergy = 0;   /* Selected via high energy in phase 1 */
         static uint64_t phase1LowEnergy = 0;    /* Selected via probabilistic skip in phase 1 */
         static uint64_t phase1Repeat = 0;       /* Selected via triesLeft repeat */
@@ -512,7 +513,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         for (;;) {
             /* Cache the current pointer to avoid repeated global dereferences */
             dynfile_t* cur = hfuzz->io.dynfileqCurrent;
-            
+
             if (unlikely(cur == NULL)) {
                 cur = TAILQ_FIRST(&hfuzz->io.dynfileq);
                 hfuzz->io.dynfileqCurrent = cur;
@@ -530,7 +531,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
             dynfile_t* next = TAILQ_NEXT(cur, pointers);
             __builtin_prefetch(next, 0, 1);  /* Read, low temporal locality */
             hfuzz->io.dynfileqCurrent = next;
-            
+
             /* Track queue wrap-arounds for corpus health monitoring */
             if (unlikely(next == NULL)) {
                 ATOMIC_POST_INC(hfuzz->cnts.corpusQueueWraps);
@@ -595,13 +596,13 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                 if (iterations >= phase1Limit + phase2Limit && topCandidates[0] != NULL) {
                     /* Track phase 2 fallbacks for metrics */
                     uint64_t fallbackCnt = ATOMIC_POST_INC(hfuzz->cnts.diffFuzzPhase2Fallbacks);
-                    
+
                     /* Rate-limited warning: log first occurrence and then every 1000th */
                     if (unlikely(fallbackCnt == 0 || (fallbackCnt % 1000) == 0)) {
                         LOG_W("Phase 2 fallback triggered (iteration %u, count=%zu, top_energy=%zu)",
                               iterations, (size_t)fallbackCnt + 1, (size_t)topEnergies[0]);
                     }
-                    
+
                     /* Weighted random selection from top candidates */
                     uint64_t totalEnergy = 0;
                     unsigned validCount  = 0;
@@ -662,12 +663,9 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         }
         #undef TOP_CANDIDATES
 
-        /* Instrumentation: log selection stats every 15 seconds
-         * Use time-based check as primary trigger (not count-based) to support
-         * slow targets like sol_txn_diff that may only do 10-20 exec/sec.
-         * The count check (every 1024) is just to avoid calling time() too often. */
-        uint64_t count = ATOMIC_POST_INC(selectionCount);
-        if ((count & 0x3FF) == 0) {  /* Check time every 1024 selections */
+        /* Instrumentation: log selection stats every 15 seconds.
+         * time(NULL) is a vDSO call on Linux — effectively free. */
+        {
             time_t logNow = time(NULL);
             time_t lastLog = ATOMIC_GET(lastLogTime);
             if (logNow - lastLog >= 15) {
@@ -678,17 +676,30 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                 uint64_t p2 = ATOMIC_GET(phase2Fallback);
                 uint64_t esum = ATOMIC_GET(totalEnergySum);
                 uint64_t total = repeat + high + low + p2;
+                if (unlikely(total == 0)) {
+                    fprintf(stderr, "[hfuzz_stats] BUG: total==0 after %zus "
+                            "(repeat=%zu high=%zu low=%zu p2=%zu)\n",
+                            (size_t)(logNow - lastLog),
+                            (size_t)repeat, (size_t)high, (size_t)low, (size_t)p2);
+                }
                 if (total > 0) {
+                    static bool first_stats_logged = false;
+                    if (unlikely(!first_stats_logged)) {
+                        first_stats_logged = true;
+                        fprintf(stderr, "[hfuzz_stats] Stats pipeline active — "
+                                "first stats fire (total=%zu, threads=%zu)\n",
+                                (size_t)total, (size_t)hfuzz->threads.threadsMax);
+                    }
                     uint64_t iters = ATOMIC_GET(totalIterations);
                     uint64_t maxIters = ATOMIC_GET(maxIterationsSeen);
                     uint64_t nonRepeat = high + low + p2;
-                    
+
                     /* Fetch decay/energy stats from global counters */
                     uint64_t eMin = ATOMIC_GET(hfuzz->cnts.energyMin);
                     uint64_t eMax = ATOMIC_GET(hfuzz->cnts.energyMax);
                     uint64_t eTotal = ATOMIC_GET(hfuzz->cnts.energySum);
                     uint64_t eCount = ATOMIC_GET(hfuzz->cnts.energyCount);
-                    
+
                     LOG_I("[SCHED-STATS] total=%zu repeat=%.1f%% high=%.1f%% low=%.1f%% phase2=%.1f%% avg_energy=%zu avg_iters=%.1f max_iters=%zu energy_range=[%zu,%zu]",
                           (size_t)total,
                           (double)repeat * 100.0 / total,
@@ -699,14 +710,14 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                           nonRepeat > 0 ? (double)iters / nonRepeat : 0.0,
                           (size_t)maxIters,
                           (size_t)eMin, (size_t)eMax);
-                    
+
                     /* Decay-specific stats for validating power scheduling changes */
                     uint64_t noveltyDecay = ATOMIC_GET(hfuzz->cnts.noveltyDecayApplied);
                     uint64_t freshBoost = ATOMIC_GET(hfuzz->cnts.freshInputBoosts);
                     uint64_t stalePenalty = ATOMIC_GET(hfuzz->cnts.staleInputPenalties);
                     uint64_t diminishing = ATOMIC_GET(hfuzz->cnts.diminishingReturnsPenalties);
                     uint64_t depthPenalty = ATOMIC_GET(hfuzz->cnts.depthPenalties);
-                    
+
                     LOG_I("[DECAY-STATS] novelty_decay=%zu fresh_boost=%zu stale_penalty=%zu diminishing=%zu depth_penalty=%zu corpus=%zu global_avg_energy=%zu",
                           (size_t)noveltyDecay,
                           (size_t)freshBoost,
@@ -715,7 +726,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                           (size_t)depthPenalty,
                           (size_t)ATOMIC_GET(hfuzz->io.dynfileqCnt),
                           eCount > 0 ? (size_t)(eTotal / eCount) : 0);
-                    
+
                     /* Health and performance stats for fuzzer monitoring */
                     uint64_t execTimeSum = ATOMIC_GET(hfuzz->cnts.execTimeSum);
                     uint64_t execTimeMax = ATOMIC_GET(hfuzz->cnts.execTimeMax);
@@ -724,19 +735,19 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                     uint64_t mutWithoutCov = ATOMIC_GET(hfuzz->cnts.mutationsWithoutNewCov);
                     uint64_t queueWraps = ATOMIC_GET(hfuzz->cnts.corpusQueueWraps);
                     uint32_t maxDepth = ATOMIC_GET(hfuzz->cnts.corpusMaxDepth);
-                    
+
                     /* Calculate mutation hit rate (percentage that found new coverage) */
                     uint64_t mutTotal = mutWithCov + mutWithoutCov;
                     double hitRate = mutTotal > 0 ? ((double)mutWithCov * 100.0 / mutTotal) : 0.0;
-                    
+
                     /* Calculate coverage plateau (seconds since last new coverage) */
                     uint64_t lastCovTime = ATOMIC_GET(hfuzz->timing.lastCovUpdate);
                     uint64_t plateauSecs = lastCovTime > 0 ? (uint64_t)(logNow - (time_t)lastCovTime) : 0;
-                    
+
                     /* Average exec time (sampled count is mutationsCnt >> 8) */
                     uint64_t sampledCount = total >> 8;
                     uint64_t avgExecTime = sampledCount > 0 ? (execTimeSum / sampledCount) : 0;
-                    
+
                     LOG_I("[HEALTH-STATS] exec_avg=%zuus exec_max=%zuus slow_execs=%zu mut_hit_rate=%.2f%% plateau_secs=%zu queue_wraps=%zu max_depth=%u",
                           (size_t)avgExecTime,
                           (size_t)execTimeMax,
@@ -745,17 +756,17 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                           (size_t)plateauSecs,
                           (size_t)queueWraps,
                           maxDepth);
-                    
+
                     /* Sanity check stats (should all be 0 or very low) */
                     uint64_t forkFails = ATOMIC_GET(hfuzz->cnts.forkFailures);
                     uint64_t persistResets = ATOMIC_GET(hfuzz->cnts.persistentResets);
                     uint64_t ioErrors = ATOMIC_GET(hfuzz->cnts.fileIOErrors);
-                    
+
                     if (forkFails > 0 || persistResets > 0 || ioErrors > 0) {
                         LOG_W("[SANITY-WARN] fork_failures=%zu persistent_resets=%zu io_errors=%zu",
                               (size_t)forkFails, (size_t)persistResets, (size_t)ioErrors);
                     }
-                    
+
                     /* Differential fuzzing specific stats */
                     uint64_t uniqueCrashes = ATOMIC_GET(hfuzz->cnts.uniqueCrashesCnt);
                     uint64_t totalCrashes = ATOMIC_GET(hfuzz->cnts.crashesCnt);
@@ -764,23 +775,23 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                     uint64_t saturatedLineages = ATOMIC_GET(hfuzz->cnts.diffFuzzSaturatedLineages);
                     uint64_t exploreSelects = ATOMIC_GET(hfuzz->cnts.explorationModeSelections);
                     uint64_t lastCrashTime = ATOMIC_GET(hfuzz->cnts.lastCrashTime);
-                    
+
                     /* Time since last crash in human-readable format */
                     uint64_t secsSinceCrash = lastCrashTime > 0 ? (uint64_t)(logNow - (time_t)lastCrashTime) : 0;
                     uint64_t hoursSinceCrash = secsSinceCrash / 3600;
                     uint64_t minsSinceCrash = (secsSinceCrash % 3600) / 60;
-                    
+
                     /* Stagnation in human-readable format */
                     uint64_t stagnationHours = plateauSecs / 3600;
                     uint64_t stagnationMins = (plateauSecs % 3600) / 60;
-                    
+
                     /* Corpus growth rate (inputs added since last log) */
                     size_t currentCorpusSize = ATOMIC_GET(hfuzz->io.dynfileqCnt);
                     size_t lastCorpusSize = ATOMIC_GET(hfuzz->cnts.corpusSizeAtLastLog);
-                    size_t corpusGrowth = (currentCorpusSize > lastCorpusSize) ? 
+                    size_t corpusGrowth = (currentCorpusSize > lastCorpusSize) ?
                                           (currentCorpusSize - lastCorpusSize) : 0;
                     ATOMIC_SET(hfuzz->cnts.corpusSizeAtLastLog, currentCorpusSize);
-                    
+
                     LOG_I("[DIFF-FUZZ-STATS] unique_crashes=%zu total_crashes=%zu timeouts=%zu "
                           "fertile_boosts=%zu saturated=%zu explore_selects=%zu "
                           "since_crash=%zuh%zum stagnation=%zuh%zum corpus_growth=%zu",
@@ -793,7 +804,25 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                           (size_t)hoursSinceCrash, (size_t)minsSinceCrash,
                           (size_t)stagnationHours, (size_t)stagnationMins,
                           corpusGrowth);
-                    
+
+                    /* Mutation health: sum per-thread counters from persistent children */
+                    {
+                        feedback_t* cov = hfuzz->feedback.covFeedbackMap;
+                        uint64_t ppCalls = 0, ppSucc = 0, cmCalls = 0, cmSucc = 0;
+                        if (cov) {
+                            for (size_t t = 0; t < hfuzz->threads.threadsMax; t++) {
+                                ppCalls += cov->pidProtoParseCallsCnt[t].val;
+                                ppSucc  += cov->pidProtoParseSuccessesCnt[t].val;
+                                cmCalls += cov->pidCustomMutatorCallsCnt[t].val;
+                                cmSucc  += cov->pidCustomMutatorSuccessesCnt[t].val;
+                            }
+                        }
+                        float parseRate = ppCalls > 0 ? ((float)ppSucc / (float)ppCalls * 100.0f) : 0.0f;
+                        LOG_I("[MUTATION-HEALTH] proto_parse=%zu/%zu (%.1f%%) custom_mutator=%zu/%zu",
+                              (size_t)ppSucc, (size_t)ppCalls, (double)parseRate,
+                              (size_t)cmSucc, (size_t)cmCalls);
+                    }
+
                     /* Defer the metrics bridge call until after the rwlock is released.
                      * All values are already captured in local variables from ATOMIC_GETs. */
                     run->pendingStatsLog = true;
@@ -838,6 +867,10 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         }
 
         current_input = run->current;
+        if (unlikely(current_input == NULL)) {
+            fprintf(stderr, "[hfuzz_stats] BUG: run->current is NULL after selection loop\n");
+            return false;
+        }
         is_imported   = current_input->imported;
 
         /* Track selection count for diminishing returns */
@@ -873,12 +906,29 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
 
             run->triesLeft = 0;
         }
+
+        /* Warn if we held the write lock too long (>500ms indicates contention or slow stats) */
+        {
+            struct timespec lock_end;
+            clock_gettime(CLOCK_MONOTONIC, &lock_end);
+            uint64_t held_ms = (uint64_t)(lock_end.tv_sec - lock_start.tv_sec) * 1000
+                             + (uint64_t)(lock_end.tv_nsec - lock_start.tv_nsec) / 1000000;
+            if (unlikely(held_ms > 500)) {
+                fprintf(stderr, "[hfuzz_stats] WARNING: dynfileq write lock held for %zums "
+                        "(>500ms, possible contention)\n", (size_t)held_ms);
+            }
+        }
     }
 
     /* Flush deferred metrics log AFTER releasing the rwlock to avoid blocking
      * all fuzzer threads on ClickHouse network I/O. */
     if (run->pendingStatsLog) {
         run->pendingStatsLog = false;
+        fprintf(stderr, "[hfuzz_stats] Flushing stats to metrics bridge "
+                "(execs=%zu, corpus=%zu, edges=%zu)\n",
+                (size_t)run->statsSnapshot.mutationsCnt,
+                (size_t)run->statsSnapshot.corpusSize,
+                (size_t)run->statsSnapshot.softCntEdge);
         const __typeof__(run->statsSnapshot)* s = &run->statsSnapshot;
         hfuzz_metrics_log_stats(
             s->mutationsCnt, s->softCntPc, s->softCntEdge,
@@ -890,8 +940,25 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
             s->plateauSecs, s->queueWraps, s->maxDepth,
             s->uniqueCrashes, s->totalCrashes, s->timeouts,
             s->fertileBoosts, s->saturatedLineages, s->exploreSelects,
-            s->secsSinceCrash, s->stagnationSecs, s->corpusGrowth
+            s->secsSinceCrash, s->stagnationSecs, s->corpusGrowth,
+            "dynamic", 0, 0
         );
+
+        /* Log mutation health counters from shared memory (written by the
+           persistent child process in persistent.c). */
+        feedback_t* cov = run->global->feedback.covFeedbackMap;
+        if (cov) {
+            uint64_t ppCalls = 0, ppSucc = 0, cmCalls = 0, cmSucc = 0;
+            for (size_t t = 0; t < run->global->threads.threadsMax; t++) {
+                ppCalls += cov->pidProtoParseCallsCnt[t].val;
+                ppSucc  += cov->pidProtoParseSuccessesCnt[t].val;
+                cmCalls += cov->pidCustomMutatorCallsCnt[t].val;
+                cmSucc  += cov->pidCustomMutatorSuccessesCnt[t].val;
+            }
+            if (ppCalls > 0 || cmCalls > 0) {
+                hfuzz_metrics_log_mutation_health(ppCalls, ppSucc, cmCalls, cmSucc);
+            }
+        }
     }
 
     /* Copy data outside of the lock - inputs are immutable once in the queue */
@@ -1153,28 +1220,13 @@ const uint8_t* input_getDiverseInputAsBuf(run_t* run, size_t* len) {
 }
 
 static bool input_shouldReadNewFile(run_t* run) {
-    if (fuzz_getState(run->global) != _HF_STATE_DYNAMIC_DRY_RUN) {
-        input_setSize(run, run->global->mutate.maxInputSz);
-        return true;
-    }
-
-    if (!run->staticFileTryMore) {
-        run->staticFileTryMore = true;
-        /* Start with 4 bytes, increase the size in following iterations */
-        input_setSize(run, HF_MIN(4U, run->global->mutate.maxInputSz));
-        return true;
-    }
-
-    /* Increase size of the current file by a factor of 2, and return it instead of a new file */
-    size_t newsz = run->dynfile->size * 2;
-    if (newsz >= run->global->mutate.maxInputSz) {
-        /* That's the largest size for this specific file that will be ever used */
-        newsz                  = run->global->mutate.maxInputSz;
-        run->staticFileTryMore = false;
-    }
-
-    input_setSize(run, newsz);
-    return false;
+    /* Always read each file once at full size.  The original graduated-size
+     * sweep (4 → 8 → 16 → … → maxInputSz) was designed for byte-oriented
+     * targets with small inputs.  For protobuf/structured targets with large
+     * corpora, truncated prefixes never parse and the 19-pass sweep turns a
+     * 200k-file dry run into a 3.8M-execution multi-hour stall. */
+    input_setSize(run, run->global->mutate.maxInputSz);
+    return true;
 }
 
 bool input_prepareStaticFile(run_t* run, bool rewind, bool needs_mangle) {

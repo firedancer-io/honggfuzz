@@ -272,6 +272,13 @@ static uint8_t mainThreadLoop(honggfuzz_t* hfuzz) {
     setupSignalsMainThread();
     setupMainThreadTimer();
 
+    /* Total threads actually started — may exceed current threadsMax when dry
+     * run boost was activated, because threadsMax is restored to the smaller
+     * configured value after dry run completes. */
+    const size_t threadsTotal = hfuzz->threads.threadsDryRunMax > 0
+                              ? hfuzz->threads.threadsDryRunMax
+                              : hfuzz->threads.threadsMax;
+
     uint64_t dynamicQueuePollTime = time(NULL);
     for (;;) {
         if (hfuzz->io.dynamicInputDir && time(NULL) - dynamicQueuePollTime > _HF_SYNC_TIME) {
@@ -291,7 +298,7 @@ static uint8_t mainThreadLoop(honggfuzz_t* hfuzz) {
                 strsignal(ATOMIC_GET(sigReceived)));
             break;
         }
-        if (ATOMIC_GET(hfuzz->threads.threadsFinished) >= hfuzz->threads.threadsMax) {
+        if (ATOMIC_GET(hfuzz->threads.threadsFinished) >= threadsTotal) {
             break;
         }
         if (hfuzz->timing.runEndTime > 0 && (time(NULL) > hfuzz->timing.runEndTime)) {
@@ -311,7 +318,7 @@ static uint8_t mainThreadLoop(honggfuzz_t* hfuzz) {
     fuzz_setTerminating();
 
     for (;;) {
-        if (ATOMIC_GET(hfuzz->threads.threadsFinished) >= hfuzz->threads.threadsMax) {
+        if (ATOMIC_GET(hfuzz->threads.threadsFinished) >= threadsTotal) {
             break;
         }
         pingThreads(hfuzz);
@@ -512,6 +519,10 @@ int main(int argc, char** argv) {
     /* Initialize metrics logging BEFORE starting fuzz threads (so coverage registration works) */
     hfuzz_metrics_session_init(hfuzz.exe.cmdline[0], argc, myargs);
 
+    hfuzz_metrics_register_coverage_feedback(
+        hfuzz.feedback.covFeedbackMap->pcGuardMap,
+        &hfuzz.feedback.covFeedbackMap->guardNb);
+
     fuzz_threadsStart(&hfuzz);
 
     pthread_t sigthread;
@@ -566,21 +577,21 @@ int main(int argc, char** argv) {
         if (hfuzz.feedback.covFeedbackMap) {
             uint64_t guardNb = atomic_load_explicit(
                 &hfuzz.feedback.covFeedbackMap->guardNb, memory_order_relaxed);
-            
+
             /* Generate output path for JSON coverage report if coverage dir is set */
             char coverage_path[PATH_MAX] = {0};
             if (hfuzz.io.covDirNew) {
-                snprintf(coverage_path, sizeof(coverage_path), 
+                snprintf(coverage_path, sizeof(coverage_path),
                          "%s/coverage_report.json", hfuzz.io.covDirNew);
             }
-            
+
             hfuzz_metrics_log_full_coverage_report(
                 hfuzz.feedback.covFeedbackMap->pcGuardMap,
                 guardNb,
                 coverage_path[0] ? coverage_path : NULL);
         }
-        
-        const char* status = (hfuzz.cfg.exitUponCrash && ATOMIC_GET(hfuzz.cnts.crashesCnt) > 0) 
+
+        const char* status = (hfuzz.cfg.exitUponCrash && ATOMIC_GET(hfuzz.cnts.crashesCnt) > 0)
                              ? "crashed" : "completed";
         hfuzz_metrics_session_end(status,
                                    hfuzz.cnts.mutationsCnt,

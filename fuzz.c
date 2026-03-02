@@ -151,6 +151,7 @@ static void fuzz_setDynamicMainState(run_t* run) {
         run->global->mutate.maxInputSz = newsz;
     }
 
+#ifdef HFUZZ_DRY_RUN_BOOST
     /* Restore thread count if it was boosted for dry run.
      * Extra threads will see the state change and exit via fuzz_threadNew's loop. */
     if (run->global->threads.threadsDryRunMax > 0
@@ -159,6 +160,7 @@ static void fuzz_setDynamicMainState(run_t* run) {
               run->global->threads.threadsMax, run->global->threads.threadsConfigured);
         ATOMIC_SET(run->global->threads.threadsMax, run->global->threads.threadsConfigured);
     }
+#endif
 
     LOG_I("Entering phase 3/3: Dynamic Main (Feedback Driven Mode)");
     ATOMIC_SET(run->global->feedback.state, _HF_STATE_DYNAMIC_MAIN);
@@ -745,6 +747,7 @@ static void* fuzz_threadNew(void* arg) {
             break;
         }
 
+#ifdef HFUZZ_DRY_RUN_BOOST
         /* Exit surplus threads after dry run boost ends */
         if (run.global->threads.threadsDryRunMax > 0
             && (size_t)fuzzNo >= ATOMIC_GET(run.global->threads.threadsMax)) {
@@ -752,6 +755,7 @@ static void* fuzz_threadNew(void* arg) {
                   fuzzNo, ATOMIC_GET(run.global->threads.threadsMax));
             break;
         }
+#endif
 
         if (run.global->cfg.exitUponCrash && ATOMIC_GET(run.global->cnts.crashesCnt) > 0) {
             LOG_I("Seen a crash. Terminating all fuzzing threads");
@@ -767,9 +771,13 @@ static void* fuzz_threadNew(void* arg) {
     }
 
     size_t j = ATOMIC_PRE_INC(run.global->threads.threadsFinished);
+#ifdef HFUZZ_DRY_RUN_BOOST
     size_t total = hfuzz->threads.threadsDryRunMax > 0
                  ? hfuzz->threads.threadsDryRunMax
                  : hfuzz->threads.threadsMax;
+#else
+    size_t total = hfuzz->threads.threadsMax;
+#endif
     LOG_I("Terminating thread no. #%" PRId32 ", left: %zu", fuzzNo,
           j < total ? total - j : 0);
     return NULL;
@@ -797,11 +805,16 @@ void fuzz_threadsStart(honggfuzz_t* hfuzz) {
         LOG_I("Entering phase 1/3: Dry Run");
         hfuzz->feedback.state = _HF_STATE_DYNAMIC_DRY_RUN;
 
+        hfuzz->threads.threadsConfigured = hfuzz->threads.threadsMax;
+#ifdef HFUZZ_DRY_RUN_BOOST
         /* Boost thread count for dry run — replaying corpus files is embarrassingly
          * parallel and I/O bound.  Use all available CPUs to avoid multi-hour
          * dry runs on large corpora (161k+ files) with low thread allocations.
-         * The configured thread count is restored when entering dynamic mode. */
-        hfuzz->threads.threadsConfigured = hfuzz->threads.threadsMax;
+         * The configured thread count is restored when entering dynamic mode.
+         *
+         * DISABLED: When the orchestrator schedules many -n 1 jobs on the same
+         * host, each one boosting to all CPUs during dry run causes OOM kills
+         * that cascade into immediate exit-code-0 thrashing. */
         long ncpus = sysconf(_SC_NPROCESSORS_ONLN);
         if (ncpus > 0 && (size_t)ncpus > hfuzz->threads.threadsMax && !hfuzz->cfg.minimize) {
             size_t boosted = (size_t)ncpus;
@@ -815,6 +828,7 @@ void fuzz_threadsStart(honggfuzz_t* hfuzz) {
                   hfuzz->threads.threadsConfigured, hfuzz->threads.threadsDryRunMax);
             hfuzz->threads.threadsMax = hfuzz->threads.threadsDryRunMax;
         }
+#endif
     } else {
         LOG_I("Entering phase: Static");
         hfuzz->feedback.state = _HF_STATE_STATIC;

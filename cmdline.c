@@ -345,6 +345,7 @@ bool cmdlineParse(int argc, char* argv[], honggfuzz_t* hfuzz) {
                 .postExternalCommand   = NULL,
                 .feedbackMutateCommand = NULL,
                 .persistent            = false,
+                .useCustomMutator      = true,
                 .netDriver             = false,
                 .asLimit               = 0U,
                 .rssLimit              = 0U,
@@ -537,6 +538,8 @@ bool cmdlineParse(int argc, char* argv[], honggfuzz_t* hfuzz) {
         { { "pin_thread_cpu", required_argument, NULL, 0x114 }, "Pin a single execution thread to this many consecutive CPUs (default: 0 = no CPU pinning)" },
         { { "dynamic_input", required_argument, NULL, 0x115 }, "Path to a directory containing the dynamic file corpus" },
         { { "statsfile", required_argument, NULL, 0x116 }, "Stats file" },
+        { { "custom-mutator", no_argument, NULL, 0x130 }, "Enable in-process LLVMFuzzerCustomMutator for structure-aware mutation (default: enabled)" },
+        { { "no-custom-mutator", no_argument, NULL, 0x131 }, "Disable in-process LLVMFuzzerCustomMutator; use honggfuzz byte-level mutation instead" },
 
 #if defined(_HF_ARCH_LINUX)
         { { "linux_symbols_bl", required_argument, NULL, 0x504 }, "Symbols blocklist filter file (one entry per line)" },
@@ -676,6 +679,12 @@ bool cmdlineParse(int argc, char* argv[], honggfuzz_t* hfuzz) {
             break;
         case 0x120:
             hfuzz->cfg.replay = true;
+            break;
+        case 0x130:
+            hfuzz->exe.useCustomMutator = true;
+            break;
+        case 0x131:
+            hfuzz->exe.useCustomMutator = false;
             break;
         case 'F':
             hfuzz->io.maxFileSz = strtoul(optarg, NULL, 0);

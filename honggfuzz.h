@@ -238,6 +238,13 @@ typedef struct {
     _Atomic uint32_t moduleRegistrationLock;  /* Simple spinlock for module registration */
     _Atomic uint32_t trackedModuleCount;
     trackedModule_t trackedModules[_HF_MAX_TRACKED_MODULES];
+    /* Mutation health counters — per-thread slots (same pattern as pidNewPC etc.)
+       to avoid contention.  Each persistent child writes only to its own slot
+       (indexed by my_thread_no).  Parent sums across all slots for metrics. */
+    cntCacheLine_t pidProtoParseCallsCnt[_HF_THREAD_MAX];
+    cntCacheLine_t pidProtoParseSuccessesCnt[_HF_THREAD_MAX];
+    cntCacheLine_t pidCustomMutatorCallsCnt[_HF_THREAD_MAX];
+    cntCacheLine_t pidCustomMutatorSuccessesCnt[_HF_THREAD_MAX];
 } feedback_t;
 
 typedef struct {
@@ -258,6 +265,8 @@ typedef struct {
 typedef struct {
     struct {
         size_t    threadsMax;
+        size_t    threadsConfigured;    /* Original -n value, restored after dry run */
+        size_t    threadsDryRunMax;     /* Boosted count used during dry run (0 = no boost) */
         size_t    threadsFinished;
         uint32_t  threadsActiveCnt;
         pthread_t mainThread;
@@ -301,6 +310,7 @@ typedef struct {
         const char*        feedbackMutateCommand;
         bool               netDriver;
         bool               persistent;
+        bool               useCustomMutator;
         uint64_t           asLimit;
         uint64_t           rssLimit;
         uint64_t           dataLimit;

@@ -28,9 +28,9 @@ void hfuzz_metrics_session_init(const char* target_name, int argc, char** argv);
  * cpu_seconds: total CPU time used
  * memory_peak_mb: peak memory usage in MB
  */
-void hfuzz_metrics_session_end(const char* status, 
+void hfuzz_metrics_session_end(const char* status,
                                 uint64_t executions,
-                                uint64_t crashes, 
+                                uint64_t crashes,
                                 uint64_t hangs,
                                 uint64_t cpu_seconds,
                                 uint64_t memory_peak_mb);
@@ -53,7 +53,7 @@ void hfuzz_metrics_log_execution(size_t input_size, uint64_t exec_time_us);
  * backtrace_hash: unique hash of the crash backtrace
  * input_size: size of the crashing input
  */
-void hfuzz_metrics_log_crash(const char* description, 
+void hfuzz_metrics_log_crash(const char* description,
                               uint64_t backtrace_hash,
                               size_t input_size);
 
@@ -78,11 +78,11 @@ void hfuzz_metrics_log_hang(size_t input_size, uint64_t timeout_ms);
  * total_cmp: cumulative comparison progress
  * corpus_count: number of inputs in the corpus
  */
-void hfuzz_metrics_log_coverage(uint64_t new_pcs, 
+void hfuzz_metrics_log_coverage(uint64_t new_pcs,
                                  uint64_t new_edges,
-                                 uint64_t new_cmp, 
+                                 uint64_t new_cmp,
                                  uint64_t total_pcs,
-                                 uint64_t total_edges, 
+                                 uint64_t total_edges,
                                  uint64_t total_cmp,
                                  size_t corpus_count);
 
@@ -100,11 +100,11 @@ void hfuzz_metrics_set_coverage_denominator(uint64_t total_guards);
  *
  * guard_map: pointer to the PC guard hit count map
  * guard_count: number of guards in the map
- * 
+ *
  * The implementation can iterate the map to count covered guards
  * and use symbolization to map to source locations.
  */
-void hfuzz_metrics_log_detailed_coverage(const uint8_t* guard_map, 
+void hfuzz_metrics_log_detailed_coverage(const uint8_t* guard_map,
                                           uint64_t guard_count);
 
 /*
@@ -132,7 +132,7 @@ typedef struct {
  * Register PC table for a module (called from __sanitizer_cov_pcs_init).
  * This provides the actual PC addresses that can be symbolized to source locations.
  *
- * module_name: path/name of the instrumented module  
+ * module_name: path/name of the instrumented module
  * pcs: array of PC entries (address + flags pairs)
  * pc_count: number of entries in the table
  * guard_start: starting guard number for this module (to correlate with guard map)
@@ -263,7 +263,27 @@ void hfuzz_metrics_log_stats(
     uint64_t explore_selects,
     uint64_t secs_since_crash,
     uint64_t stagnation_secs,
-    uint64_t corpus_growth
+    uint64_t corpus_growth,
+    const char* fuzzer_state,
+    uint64_t dry_run_tested,
+    uint64_t dry_run_total
+);
+
+/*
+ * Log mutation pipeline health metrics.
+ * Called periodically alongside hfuzz_metrics_log_stats() to track whether
+ * the protobuf mutation pipeline is functional.
+ *
+ * proto_parse_calls:        Total LLVMFuzzerTestOneInput invocations
+ * proto_parse_successes:    Calls where LoadProtoInput returned true
+ * custom_mutator_calls:     LLVMFuzzerCustomMutator invocations
+ * custom_mutator_successes: Custom mutator calls that returned >0 bytes
+ */
+void hfuzz_metrics_log_mutation_health(
+    uint64_t proto_parse_calls,
+    uint64_t proto_parse_successes,
+    uint64_t custom_mutator_calls,
+    uint64_t custom_mutator_successes
 );
 
 #ifdef __cplusplus

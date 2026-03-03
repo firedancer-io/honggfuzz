@@ -112,6 +112,7 @@ static void fuzz_setDynamicMainState(run_t* run) {
     if (run->global->cfg.minimize) {
         LOG_I("Entering phase 3/3: Corpus Minimization");
         ATOMIC_SET(run->global->feedback.state, _HF_STATE_DYNAMIC_MINIMIZE);
+        fprintf(stderr, "[hfuzz_stats] state=minimize\n");
         return;
     }
 
@@ -164,6 +165,18 @@ static void fuzz_setDynamicMainState(run_t* run) {
 
     LOG_I("Entering phase 3/3: Dynamic Main (Feedback Driven Mode)");
     ATOMIC_SET(run->global->feedback.state, _HF_STATE_DYNAMIC_MAIN);
+
+    uint64_t execs = ATOMIC_GET(run->global->cnts.mutationsCnt);
+    uint64_t pcs   = ATOMIC_GET(run->global->feedback.hwCnts.softCntPc);
+    uint64_t edges = ATOMIC_GET(run->global->feedback.hwCnts.softCntEdge);
+    uint64_t corpus = ATOMIC_GET(run->global->io.dynfileqCnt);
+    uint64_t uniqueCrashes = ATOMIC_GET(run->global->cnts.uniqueCrashesCnt);
+    uint64_t crashes = ATOMIC_GET(run->global->cnts.crashesCnt);
+    fprintf(stderr, "[hfuzz_stats] state=dynamic execs=%zu pcs=%zu edges=%zu "
+            "corpus=%zu crashes=%zu/%zu threads=%zu\n",
+            (size_t)execs, (size_t)pcs, (size_t)edges,
+            (size_t)corpus, (size_t)uniqueCrashes, (size_t)crashes,
+            (size_t)run->global->threads.threadsMax);
 }
 
 static void fuzz_minimizeRemoveFiles(run_t* run) {
@@ -208,6 +221,7 @@ static void fuzz_perfFeedback(run_t* run) {
     uint64_t softCurEdge       = 0;
     uint64_t softNewCmp        = 0;
     uint64_t softCurCmp        = 0;
+    uint64_t softEdgeBucketInc = 0;
     bool     softNewStackDepth = false;
 
     if (run->global->feedback.dynFileMethod & _HF_DYNFILE_SOFT) {
@@ -226,6 +240,10 @@ static void fuzz_perfFeedback(run_t* run) {
         ATOMIC_CLEAR(run->global->feedback.covFeedbackMap->pidNewCmp[run->fuzzNo].val);
         softCurCmp = ATOMIC_GET(run->global->feedback.covFeedbackMap->pidTotalCmp[run->fuzzNo].val);
         ATOMIC_CLEAR(run->global->feedback.covFeedbackMap->pidTotalCmp[run->fuzzNo].val);
+
+        softEdgeBucketInc = ATOMIC_GET(run->global->feedback.covFeedbackMap->pidEdgeBucketInc[run->fuzzNo].val);
+        ATOMIC_CLEAR(run->global->feedback.covFeedbackMap->pidEdgeBucketInc[run->fuzzNo].val);
+
         ATOMIC_CLEAR(run->global->feedback.covFeedbackMap->pidLastStackDepth[run->fuzzNo].val);
 
         softNewStackDepth = ATOMIC_XCHG(
@@ -237,10 +255,10 @@ static void fuzz_perfFeedback(run_t* run) {
     int64_t diff0 = (int64_t)run->global->feedback.hwCnts.cpuInstrCnt - run->hwCnts.cpuInstrCnt;
     int64_t diff1 = (int64_t)run->global->feedback.hwCnts.cpuBranchCnt - run->hwCnts.cpuBranchCnt;
 
-    /* Any increase in coverage (edge, pc, cmp, hw, stack) counters forces adding input to the
-     * corpus */
+    /* Any increase in coverage (edge, pc, cmp, hw, stack, edge-bucket) counters forces adding
+     * input to the corpus */
     if (run->hwCnts.newBBCnt > 0 || softNewPC > 0 || softNewEdge > 0 || softNewCmp > 0 ||
-        softNewStackDepth || diff0 < 0 || diff1 < 0) {
+        softEdgeBucketInc > 0 || softNewStackDepth || diff0 < 0 || diff1 < 0) {
         if (diff0 < 0) {
             run->global->feedback.hwCnts.cpuInstrCnt = run->hwCnts.cpuInstrCnt;
         }
@@ -251,15 +269,18 @@ static void fuzz_perfFeedback(run_t* run) {
         run->global->feedback.hwCnts.softCntPc += softNewPC;
         run->global->feedback.hwCnts.softCntEdge += softNewEdge;
         run->global->feedback.hwCnts.softCntCmp += softNewCmp;
+        run->global->feedback.hwCnts.softCntEdgeBucket += softEdgeBucketInc;
 
-        LOG_I("Sz:%zu Tm:%" _HF_NONMON_SEP PRIu64 "us (i/b/h/e/p/c) New:%" PRIu64 "/%" PRIu64
-              "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 ", Cur:%" PRIu64 "/%" PRIu64
-              "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64,
+        LOG_I("Sz:%zu Tm:%" _HF_NONMON_SEP PRIu64 "us (i/b/h/e/p/c/eb) New:%" PRIu64 "/%" PRIu64
+              "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64
+              ", Cur:%" PRIu64 "/%" PRIu64
+              "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64 "/%" PRIu64,
             run->dynfile->size, util_timeNowUSecs() - run->timeStartedUSecs,
             run->hwCnts.cpuInstrCnt, run->hwCnts.cpuBranchCnt, run->hwCnts.newBBCnt, softNewEdge,
-            softNewPC, softNewCmp, run->hwCnts.cpuInstrCnt, run->hwCnts.cpuBranchCnt,
+            softNewPC, softNewCmp, softEdgeBucketInc, run->hwCnts.cpuInstrCnt, run->hwCnts.cpuBranchCnt,
             run->global->feedback.hwCnts.bbCnt, run->global->feedback.hwCnts.softCntEdge,
-            run->global->feedback.hwCnts.softCntPc, run->global->feedback.hwCnts.softCntCmp);
+            run->global->feedback.hwCnts.softCntPc, run->global->feedback.hwCnts.softCntCmp,
+            run->global->feedback.hwCnts.softCntEdgeBucket);
 
         if (run->global->io.statsFileName) {
             const time_t curr_sec      = time(NULL);
@@ -488,7 +509,7 @@ static bool fuzz_fetchInput(run_t* run) {
 
             if (execs > 0) {
                 hfuzz_metrics_log_stats(
-                    execs, pcs, edges,
+                    execs, pcs, edges, 0, 0,
                     /* sched (not available outside dynamic mode) */
                     0, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0.0f, 0, 0, 0,
                     /* decay (not available outside dynamic mode) */

@@ -321,7 +321,7 @@ void display_display(honggfuzz_t* hfuzz) {
 
     display_start();
 
-    display_put(ESC_NAV(13, 1) ESC_CLEAR_ABOVE ESC_NAV(1, 1));
+    display_put(ESC_NAV(14, 1) ESC_CLEAR_ABOVE ESC_NAV(1, 1));
     display_put("------------------------[" ESC_BOLD "%31s " ESC_RESET "]----------------------\n",
         timeStr);
     display_put("  Iterations : " ESC_BOLD "%" _HF_NONMON_SEP "zu" ESC_RESET, curr_exec_cnt);
@@ -384,6 +384,19 @@ void display_display(honggfuzz_t* hfuzz) {
         ATOMIC_GET(hfuzz->cnts.verifiedCrashesCnt));
     display_put("    Timeouts : " ESC_BOLD "%" _HF_NONMON_SEP "zu" ESC_RESET " [%lu sec]\n",
         ATOMIC_GET(hfuzz->cnts.timeoutedCnt), (unsigned long)hfuzz->timing.tmOut);
+
+    size_t truncatedTooLarge = ATOMIC_GET(hfuzz->cnts.inputsTruncatedTooLarge);
+    if (hfuzz->feedback.covFeedbackMap) {
+        for (size_t i = 0; i < hfuzz->threads.threadsMax; i++) {
+            truncatedTooLarge += hfuzz->feedback.covFeedbackMap->pidInputsTruncatedCnt[i].val;
+        }
+    }
+    if (truncatedTooLarge > 0) {
+        display_put("   Truncated : " ESC_BOLD "%s%" _HF_NONMON_SEP "zu" ESC_RESET
+                    " [max: %" _HF_NONMON_SEP "zu bytes]\n",
+            truncatedTooLarge > 100 ? ESC_RED : "", truncatedTooLarge,
+            hfuzz->mutate.maxInputSz);
+    }
 
     /* Differential fuzzing metrics */
     size_t phase2Fallbacks = ATOMIC_GET(hfuzz->cnts.diffFuzzPhase2Fallbacks);
@@ -459,7 +472,7 @@ void display_display(honggfuzz_t* hfuzz) {
     display_put("\n---------------------------------- [ " ESC_BOLD "LOGS" ESC_RESET
                 " ] ------------------/ " ESC_BOLD "%s %s " ESC_RESET "/-",
         PROG_NAME, PROG_VERSION);
-    display_put(ESC_SCROLL_REGION(13, ) ESC_NAV_HORIZ(1) ESC_NAV_DOWN(500));
+    display_put(ESC_SCROLL_REGION(14, ) ESC_NAV_HORIZ(1) ESC_NAV_DOWN(500));
 
     MX_SCOPED_LOCK(logMutexGet());
     display_stop();

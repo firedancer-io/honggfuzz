@@ -220,6 +220,9 @@ void hfuzz_metrics_register_coverage_feedback(const uint8_t* guard_map,
  *   secs_since_crash: seconds since last crash
  *   stagnation_secs: seconds of coverage stagnation
  *   corpus_growth: corpus inputs added since last log
+ *
+ * INPUT-HEALTH:
+ *   inputs_truncated_too_large: count of inputs truncated because they exceeded maxFileSz/maxInputSz
  */
 void hfuzz_metrics_log_stats(
     /* EXECUTION COUNT (for timeseries rate calculation) */
@@ -268,7 +271,9 @@ void hfuzz_metrics_log_stats(
     uint64_t corpus_growth,
     const char* fuzzer_state,
     uint64_t dry_run_tested,
-    uint64_t dry_run_total
+    uint64_t dry_run_total,
+    /* INPUT-HEALTH */
+    uint64_t inputs_truncated_too_large
 );
 
 /*

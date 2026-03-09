@@ -38,7 +38,8 @@ typedef void (*log_stats_fn)(
     uint64_t, uint64_t, uint64_t, float, uint64_t, uint64_t, uint32_t,
     uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
     const char*, /* fuzzer_state */
-    uint64_t, uint64_t /* dry_run_tested, dry_run_total */
+    uint64_t, uint64_t, /* dry_run_tested, dry_run_total */
+    uint64_t  /* inputs_truncated_too_large */
 );
 
 /* Resolved function pointers */
@@ -226,7 +227,9 @@ void hfuzz_metrics_log_stats(
     uint64_t corpus_growth,
     const char* fuzzer_state,
     uint64_t dry_run_tested,
-    uint64_t dry_run_total
+    uint64_t dry_run_total,
+    /* INPUT-HEALTH */
+    uint64_t inputs_truncated_too_large
 ) {
     if (fn_log_stats) {
         fn_log_stats(
@@ -236,7 +239,8 @@ void hfuzz_metrics_log_stats(
             novelty_decay, fresh_boost, stale_penalty, diminishing, depth_penalty, corpus_count, global_avg_energy,
             exec_avg_us, exec_max_us, slow_execs, mut_hit_rate_pct, plateau_secs, queue_wraps, max_depth,
             unique_crashes, total_crashes, timeouts, fertile_boosts, saturated, explore_selects, secs_since_crash, stagnation_secs, corpus_growth,
-            fuzzer_state, dry_run_tested, dry_run_total
+            fuzzer_state, dry_run_tested, dry_run_total,
+            inputs_truncated_too_large
         );
     } else {
         static bool warned = false;

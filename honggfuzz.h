@@ -245,6 +245,7 @@ typedef struct {
     cntCacheLine_t pidProtoParseSuccessesCnt[_HF_THREAD_MAX];
     cntCacheLine_t pidCustomMutatorCallsCnt[_HF_THREAD_MAX];
     cntCacheLine_t pidCustomMutatorSuccessesCnt[_HF_THREAD_MAX];
+    cntCacheLine_t pidInputsTruncatedCnt[_HF_THREAD_MAX];
 } feedback_t;
 
 typedef struct {
@@ -424,6 +425,7 @@ typedef struct {
         size_t forkFailures;              /* Fork syscall failures */
         size_t persistentResets;          /* Persistent mode resets */
         size_t fileIOErrors;              /* File read/write failures */
+        size_t inputsTruncatedTooLarge;    /* Inputs truncated because they exceeded maxFileSz */
     } cnts;
     struct {
         bool enabled;
@@ -520,6 +522,7 @@ typedef struct {
         uint64_t uniqueCrashes, totalCrashes, timeouts;
         uint64_t fertileBoosts, saturatedLineages, exploreSelects;
         uint64_t secsSinceCrash, stagnationSecs, corpusGrowth;
+        uint64_t inputsTruncatedTooLarge;
     } statsSnapshot;
 
     struct {

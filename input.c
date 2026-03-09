@@ -99,6 +99,7 @@ bool input_getDirStatsAndRewind(honggfuzz_t* hfuzz) {
         if (hfuzz->io.maxFileSz && st.st_size > (off_t)hfuzz->io.maxFileSz) {
             LOG_D("File '%s' is bigger than maximal defined file size (-F): %" PRIu64 " > %zu",
                 path, (uint64_t)st.st_size, hfuzz->io.maxFileSz);
+            ATOMIC_POST_INC(hfuzz->cnts.inputsTruncatedTooLarge);
         }
         if ((size_t)st.st_size > hfuzz->mutate.maxInputSz) {
             hfuzz->mutate.maxInputSz = st.st_size;
@@ -117,6 +118,21 @@ bool input_getDirStatsAndRewind(honggfuzz_t* hfuzz) {
 
     if (hfuzz->io.fileCnt == 0U) {
         LOG_W("No usable files in the input directory '%s'", hfuzz->io.inputDir);
+    }
+
+    size_t discarded = ATOMIC_GET(hfuzz->cnts.inputsTruncatedTooLarge);
+    if (discarded > 0 && hfuzz->io.fileCnt > 0) {
+        size_t pct = (discarded * 100) / hfuzz->io.fileCnt;
+        if (pct >= 50) {
+            LOG_W("%" _HF_NONMON_SEP "zu of %" _HF_NONMON_SEP "zu corpus files (%zu%%) exceed "
+                  "max file size (-F %" _HF_NONMON_SEP "zu). These inputs will be truncated and "
+                  "likely fail to parse. Consider increasing -F or shrinking the corpus.",
+                discarded, hfuzz->io.fileCnt, pct, hfuzz->io.maxFileSz);
+        } else if (pct >= 10) {
+            LOG_I("%" _HF_NONMON_SEP "zu of %" _HF_NONMON_SEP "zu corpus files (%zu%%) exceed "
+                  "max file size (-F %" _HF_NONMON_SEP "zu) and will be truncated",
+                discarded, hfuzz->io.fileCnt, pct, hfuzz->io.maxFileSz);
+        }
     }
 
     LOG_D("Analyzed '%s' directory: maxInputSz:%zu, number of usable files:%zu", hfuzz->io.inputDir,
@@ -418,6 +434,12 @@ void input_addDynamicInput(run_t* run) {
     }
 
     run->global->io.dynfileqMaxSz = HF_MAX(run->global->io.dynfileqMaxSz, dynfile->size);
+
+    /* Track maximum mutation depth in corpus (race-tolerant, same pattern as energyMax) */
+    uint32_t curMaxDepth = ATOMIC_GET(run->global->cnts.corpusMaxDepth);
+    if (dynfile->depth > curMaxDepth) {
+        ATOMIC_SET(run->global->cnts.corpusMaxDepth, dynfile->depth);
+    }
 
     /* Sort it by coverage - put better coverage earlier in the list */
     dynfile_t* iter = NULL;
@@ -806,6 +828,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                           corpusGrowth);
 
                     /* Mutation health: sum per-thread counters from persistent children */
+                    uint64_t childTruncated = 0;
                     {
                         feedback_t* cov = hfuzz->feedback.covFeedbackMap;
                         uint64_t ppCalls = 0, ppSucc = 0, cmCalls = 0, cmSucc = 0;
@@ -815,6 +838,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                                 ppSucc  += cov->pidProtoParseSuccessesCnt[t].val;
                                 cmCalls += cov->pidCustomMutatorCallsCnt[t].val;
                                 cmSucc  += cov->pidCustomMutatorSuccessesCnt[t].val;
+                                childTruncated += cov->pidInputsTruncatedCnt[t].val;
                             }
                         }
                         float parseRate = ppCalls > 0 ? ((float)ppSucc / (float)ppCalls * 100.0f) : 0.0f;
@@ -864,6 +888,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                     run->statsSnapshot.secsSinceCrash      = (uint64_t)secsSinceCrash;
                     run->statsSnapshot.stagnationSecs      = (uint64_t)plateauSecs;
                     run->statsSnapshot.corpusGrowth        = (uint64_t)corpusGrowth;
+                    run->statsSnapshot.inputsTruncatedTooLarge = (uint64_t)ATOMIC_GET(hfuzz->cnts.inputsTruncatedTooLarge) + childTruncated;
                 }
             }
         }
@@ -913,8 +938,9 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         {
             struct timespec lock_end;
             clock_gettime(CLOCK_MONOTONIC, &lock_end);
-            uint64_t held_ms = (uint64_t)(lock_end.tv_sec - lock_start.tv_sec) * 1000
-                             + (uint64_t)(lock_end.tv_nsec - lock_start.tv_nsec) / 1000000;
+            int64_t elapsed_ns = (int64_t)(lock_end.tv_sec - lock_start.tv_sec) * (int64_t)1000000000
+                               + (int64_t)(lock_end.tv_nsec - lock_start.tv_nsec);
+            uint64_t held_ms = (uint64_t)(elapsed_ns / (int64_t)1000000);
             if (unlikely(held_ms > 500)) {
                 fprintf(stderr, "[hfuzz_stats] WARNING: dynfileq write lock held for %zums "
                         "(>500ms, possible contention)\n", (size_t)held_ms);
@@ -943,7 +969,8 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
             s->uniqueCrashes, s->totalCrashes, s->timeouts,
             s->fertileBoosts, s->saturatedLineages, s->exploreSelects,
             s->secsSinceCrash, s->stagnationSecs, s->corpusGrowth,
-            "dynamic", 0, 0
+            "dynamic", 0, 0,
+            s->inputsTruncatedTooLarge
         );
 
         /* Log mutation health counters from shared memory (written by the
@@ -1077,6 +1104,12 @@ void input_enqueueDynamicInputs(honggfuzz_t* hfuzz) {
         }
 
         dynamicFileSz = dynamicFileStat.st_size;
+
+        if (hfuzz->mutate.maxInputSz > 0 && dynamicFileSz > hfuzz->mutate.maxInputSz) {
+            LOG_D("Dynamic input '%s' will be truncated (%" PRIu64 " > %zu)",
+                dynamicInputFileName, (uint64_t)dynamicFileSz, hfuzz->mutate.maxInputSz);
+            ATOMIC_POST_INC(hfuzz->cnts.inputsTruncatedTooLarge);
+        }
 
         uint8_t* dynamicFile = (uint8_t*)mmap(
             NULL, dynamicFileSz, PROT_READ | PROT_WRITE, MAP_SHARED, dynamicFileFd, 0);

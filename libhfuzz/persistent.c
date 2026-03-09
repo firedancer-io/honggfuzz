@@ -195,7 +195,10 @@ static void HonggfuzzPersistentLoop(void) {
          */
         if (use_custom_mutator && LLVMFuzzerCustomMutator && len > 0) {
             size_t copy_len = len;
-            if (copy_len > _HF_INPUT_MAX_SIZE) copy_len = _HF_INPUT_MAX_SIZE;
+            if (copy_len > _HF_INPUT_MAX_SIZE) {
+                copy_len = _HF_INPUT_MAX_SIZE;
+                globalCovFeedback->pidInputsTruncatedCnt[my_thread_no].val++;
+            }
             memcpy(hf_mut_buf, buf, copy_len);
             hf_mut_counter += 0x9e3779b9u;
             globalCovFeedback->pidCustomMutatorCallsCnt[my_thread_no].val++;

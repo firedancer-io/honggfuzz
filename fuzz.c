@@ -508,6 +508,7 @@ static bool fuzz_fetchInput(run_t* run) {
             fprintf(stderr, "\n");
 
             if (execs > 0) {
+                uint64_t truncatedTooLarge = ATOMIC_GET(hfuzz->cnts.inputsTruncatedTooLarge);
                 hfuzz_metrics_log_stats(
                     execs, pcs, edges, 0, 0,
                     /* sched (not available outside dynamic mode) */
@@ -519,7 +520,8 @@ static bool fuzz_fetchInput(run_t* run) {
                     plateauSecs, queueWraps, maxDepth,
                     /* diff-fuzz */
                     uniqueCrashes, crashes, timeouts, 0, 0, 0, 0, 0, 0,
-                    state_str, testedFiles, totalFiles
+                    state_str, testedFiles, totalFiles,
+                    truncatedTooLarge
                 );
             }
         }
@@ -623,6 +625,24 @@ static void fuzz_fuzzLoop(run_t* run) {
     {
         uint64_t exec_time_us = util_timeNowUSecs() - run->timeStartedUSecs;
         hfuzz_metrics_log_execution(run->dynfile->size, exec_time_us);
+
+        /* Sample every 256th execution for avg/slow stats (matches dashboard's >> 8 divisor) */
+        uint64_t mutCnt = ATOMIC_GET(run->global->cnts.mutationsCnt);
+        if ((mutCnt & 0xFF) == 0) {
+            ATOMIC_POST_ADD(run->global->cnts.execTimeSum, exec_time_us);
+            uint64_t sampledCount = mutCnt >> 8;
+            if (sampledCount > 1) {
+                uint64_t avg = ATOMIC_GET(run->global->cnts.execTimeSum) / sampledCount;
+                if (exec_time_us > avg * 10) {
+                    ATOMIC_POST_INC(run->global->cnts.execTimeSlowCnt);
+                }
+            }
+        }
+        /* Always track max (race-tolerant, same pattern as energyMax) */
+        uint64_t curMax = ATOMIC_GET(run->global->cnts.execTimeMax);
+        if (exec_time_us > curMax) {
+            ATOMIC_SET(run->global->cnts.execTimeMax, exec_time_us);
+        }
     }
 
     if (run->global->feedback.dynFileMethod != _HF_DYNFILE_NONE) {

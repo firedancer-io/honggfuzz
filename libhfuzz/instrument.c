@@ -961,10 +961,11 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard_init(uint32_t* start
  * This gives: 100% for 0=>1, 50% for 1=>2, 33% for 2=>4, 20% for 4=>8, etc.
  * Result: logarithmic expected corpus additions per edge, never fully ignoring transitions.
  *
- * When disabled (set to 0), falls back to the original behavior: every edge bucket
- * transition unconditionally increments pidNewCmp (unbounded, can dominate corpus).
+ * When disabled (set to 0), every edge bucket transition unconditionally increments
+ * pidEdgeBucketInc (which fuzz.c reads as softEdgeBucketInc).  This produces more
+ * corpus additions from frequency changes but avoids suppressing real coverage signal.
  */
-#define _HF_EDGE_BUCKET_LOG_COUNTING 1
+#define _HF_EDGE_BUCKET_LOG_COUNTING 0
 
 /* Map number of visits to an edge into buckets */
 static uint8_t const instrumentCntMap[256] = {
@@ -1062,7 +1063,7 @@ HF_REQUIRE_SSE42_POPCNT void __sanitizer_cov_trace_pc_guard(uint32_t* guard_ptr)
                 ATOMIC_PRE_INC(globalCovFeedback->pidEdgeBucketInc[my_thread_no].val);
             }
 #else
-            ATOMIC_PRE_INC(globalCovFeedback->pidNewCmp[my_thread_no].val);
+            ATOMIC_PRE_INC(globalCovFeedback->pidEdgeBucketInc[my_thread_no].val);
 #endif
         }
     }
@@ -1112,7 +1113,7 @@ void instrument8BitCountersCount(void) {
                         ATOMIC_PRE_INC(globalCovFeedback->pidEdgeBucketInc[my_thread_no].val);
                     }
 #else
-                    ATOMIC_PRE_INC(globalCovFeedback->pidNewCmp[my_thread_no].val);
+                    ATOMIC_PRE_INC(globalCovFeedback->pidEdgeBucketInc[my_thread_no].val);
 #endif
                 }
             }

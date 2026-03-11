@@ -29,7 +29,8 @@ typedef void (*register_module_fn)(const char*, uint64_t, uint64_t);
 typedef void (*register_pc_table_fn)(const char*, const hfuzz_pc_entry_t*, size_t, uint64_t);
 typedef void (*log_full_coverage_fn)(const uint8_t*, uint64_t, const char*);
 typedef void (*register_coverage_feedback_fn)(const uint8_t*, void*);
-typedef void (*log_mutation_health_fn)(uint64_t, uint64_t, uint64_t, uint64_t);
+typedef void (*log_mutation_health_fn)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                                       uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 typedef void (*log_stats_fn)(
     uint64_t, /* total_executions */
     uint64_t, uint64_t, uint64_t, uint64_t, /* coverage_pcs, coverage_edges, coverage_cmp, coverage_edge_bucket */
@@ -256,10 +257,24 @@ void hfuzz_metrics_log_mutation_health(
     uint64_t proto_parse_calls,
     uint64_t proto_parse_successes,
     uint64_t custom_mutator_calls,
-    uint64_t custom_mutator_successes
+    uint64_t custom_mutator_successes,
+    uint64_t proto_round_cnt,
+    uint64_t proto_scan_ok_cnt,
+    uint64_t total_round_cnt,
+    uint64_t lpm_mutate_cnt,
+    uint64_t lpm_crossover_cnt,
+    uint64_t lpm_parse_fail_cnt,
+    uint64_t postprocessor_cnt,
+    uint64_t elf_fixup_ok_cnt,
+    uint64_t exec_fail_cnt,
+    uint64_t verify_cnt
 ) {
     if (fn_log_mutation_health) {
         fn_log_mutation_health(proto_parse_calls, proto_parse_successes,
-                               custom_mutator_calls, custom_mutator_successes);
+                               custom_mutator_calls, custom_mutator_successes,
+                               proto_round_cnt, proto_scan_ok_cnt, total_round_cnt,
+                               lpm_mutate_cnt, lpm_crossover_cnt, lpm_parse_fail_cnt,
+                               postprocessor_cnt, elf_fixup_ok_cnt,
+                               exec_fail_cnt, verify_cnt);
     }
 }

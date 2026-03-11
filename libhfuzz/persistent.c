@@ -1,3 +1,4 @@
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -118,6 +119,13 @@ void HF_ITER(const uint8_t** buf_ptr, size_t* len_ptr) {
    honggfuzz parent can read the aggregate across all child processes. */
 __attribute__((weak)) uint64_t solfuzz_proto_test_one_input_calls(void);
 __attribute__((weak)) uint64_t solfuzz_proto_test_one_input_runs(void);
+__attribute__((weak)) uint64_t solfuzz_lpm_mutate_calls(void);
+__attribute__((weak)) uint64_t solfuzz_lpm_crossover_calls(void);
+__attribute__((weak)) uint64_t solfuzz_lpm_parse_fail_calls(void);
+__attribute__((weak)) uint64_t solfuzz_postprocessor_calls(void);
+__attribute__((weak)) uint64_t solfuzz_elf_fixup_ok_calls(void);
+__attribute__((weak)) uint64_t solfuzz_exec_fail_calls(void);
+__attribute__((weak)) uint64_t solfuzz_verify_calls(void);
 
 extern const char* const LIBHFUZZ_module_memorycmp;
 extern const char* const LIBHFUZZ_module_instrument;
@@ -125,6 +133,13 @@ static void              HonggfuzzRunOneInput(const uint8_t* buf, size_t len) {
     instrumentResetLocalCovFeedback();
     instrumentResetStackDepth();
     int ret = LLVMFuzzerTestOneInput(buf, len);
+    if (ret == -1) {
+        /* libFuzzer convention: -1 means "reject / skip this input".
+           Don't record coverage — the target chose not to process it
+           (e.g. input too small).  This avoids killing the persistent
+           child on every rejected mutation. */
+        return;
+    }
     if (ret != 0) {
         LOG_D("Dereferenced: %s, %s", LIBHFUZZ_module_memorycmp, LIBHFUZZ_module_instrument);
         LOG_F("LLVMFuzzerTestOneInput() returned '%d' instead of '0'", ret);
@@ -137,6 +152,21 @@ static void              HonggfuzzRunOneInput(const uint8_t* buf, size_t len) {
             solfuzz_proto_test_one_input_calls();
         globalCovFeedback->pidProtoParseSuccessesCnt[my_thread_no].val =
             solfuzz_proto_test_one_input_runs();
+    }
+    if (solfuzz_lpm_mutate_calls) {
+        globalCovFeedback->pidLpmMutateCnt[my_thread_no].val = solfuzz_lpm_mutate_calls();
+        globalCovFeedback->pidLpmCrossOverCnt[my_thread_no].val = solfuzz_lpm_crossover_calls();
+        globalCovFeedback->pidLpmParseFailCnt[my_thread_no].val = solfuzz_lpm_parse_fail_calls();
+    }
+    if (solfuzz_postprocessor_calls) {
+        globalCovFeedback->pidPostProcessorCnt[my_thread_no].val = solfuzz_postprocessor_calls();
+    }
+    if (solfuzz_elf_fixup_ok_calls) {
+        globalCovFeedback->pidElfFixupOkCnt[my_thread_no].val = solfuzz_elf_fixup_ok_calls();
+    }
+    if (solfuzz_exec_fail_calls) {
+        globalCovFeedback->pidExecFailCnt[my_thread_no].val = solfuzz_exec_fail_calls();
+        globalCovFeedback->pidVerifyCnt[my_thread_no].val = solfuzz_verify_calls();
     }
 }
 
@@ -213,6 +243,64 @@ static void HonggfuzzPersistentLoop(void) {
     }
 }
 
+static int HonggfuzzRunOneFile(const char* fname, uint8_t* buf) {
+    int in_fd = TEMP_FAILURE_RETRY(open(fname, O_RDONLY));
+    if (in_fd == -1) {
+        PLOG_W("Cannot open '%s' as input, skipping", fname);
+        return -1;
+    }
+    ssize_t len = files_readFromFd(in_fd, buf, _HF_INPUT_MAX_SIZE);
+    close(in_fd);
+    if (len < 0) {
+        LOG_E("Couldn't read data from '%s': %s", fname, strerror(errno));
+        return -1;
+    }
+    HonggfuzzRunOneInput(buf, len);
+    return 0;
+}
+
+static int HonggfuzzRunFromDir(const char* dirpath, uint8_t* buf) {
+    int dir_fd = TEMP_FAILURE_RETRY(open(dirpath, O_RDONLY | O_DIRECTORY));
+    if (dir_fd == -1) {
+        PLOG_E("Cannot open directory '%s'", dirpath);
+        return -1;
+    }
+    DIR* dir = fdopendir(dir_fd);
+    if (!dir) {
+        PLOG_E("fdopendir('%s') failed", dirpath);
+        close(dir_fd);
+        return -1;
+    }
+    int ret = 0;
+    size_t count = 0;
+    for (;;) {
+        errno = 0;
+        struct dirent* ent = readdir(dir);
+        if (!ent) {
+            if (errno) {
+                PLOG_E("readdir('%s') failed", dirpath);
+                ret = -1;
+            }
+            break;
+        }
+        if (ent->d_name[0] == '.') continue;
+        int file_fd = openat(dir_fd, ent->d_name, O_RDONLY);
+        if (file_fd == -1) continue;
+        struct stat st;
+        if (fstat(file_fd, &st) == 0 && S_ISREG(st.st_mode)) {
+            ssize_t len = files_readFromFd(file_fd, buf, _HF_INPUT_MAX_SIZE);
+            if (len >= 0) {
+                HonggfuzzRunOneInput(buf, len);
+                count++;
+            }
+        }
+        close(file_fd);
+    }
+    closedir(dir);
+    LOG_I("Processed %zu files from directory '%s'", count, dirpath);
+    return ret;
+}
+
 static int HonggfuzzRunFromFile(int argc, char** argv) {
     LOG_I("🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃");
     LOG_I("Usage for fuzzing: honggfuzz -P [flags] -- %s", argv[0]);
@@ -237,23 +325,16 @@ static int HonggfuzzRunFromFile(int argc, char** argv) {
     int ret = 0;
     for (int i = 1; i < argc; i++) {
         const char* fname = argv[i];
-        int in_fd = TEMP_FAILURE_RETRY(open(fname, O_RDONLY));
-        if (in_fd == -1) {
-            PLOG_W("Cannot open '%s' as input, skipping", fname);
+        struct stat st;
+        if (stat(fname, &st) == -1) {
+            PLOG_W("Cannot stat '%s', skipping", fname);
             continue;
         }
-
-        LOG_I("Processing input file: '%s'", fname);
-        ssize_t len = files_readFromFd(in_fd, buf, _HF_INPUT_MAX_SIZE);
-        close(in_fd);
-
-        if (len < 0) {
-            LOG_E("Couldn't read data from '%s': %s", fname, strerror(errno));
-            ret = -1;
-            continue;
+        if (S_ISDIR(st.st_mode)) {
+            if (HonggfuzzRunFromDir(fname, buf) != 0) ret = -1;
+        } else if (S_ISREG(st.st_mode)) {
+            if (HonggfuzzRunOneFile(fname, buf) != 0) ret = -1;
         }
-
-        HonggfuzzRunOneInput(buf, len);
     }
 
     free(buf);

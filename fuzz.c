@@ -349,6 +349,7 @@ static void fuzz_perfFeedback(run_t* run) {
                 ATOMIC_POST_INC(run->global->mutate.stats[tier].successes);
             }
         }
+        ATOMIC_POST_INC(run->global->cnts.mutationsWithNewCov);
 
         /* Push useful imported input to dynamic queue again for the further mutations */
         if (run->dynfile->imported) {
@@ -377,14 +378,17 @@ static void fuzz_perfFeedback(run_t* run) {
         hfuzz_metrics_log_detailed_coverage(
             run->global->feedback.covFeedbackMap->pcGuardMap,
             total_guards);
-    } else if (run->dynfile->imported) {
-        /* Remove useless imported inputs from corpus */
-        LOG_D("Removing useless imported file: %s", run->dynfile->path);
-        char fname[PATH_MAX];
-        snprintf(fname, PATH_MAX, "%s/%s",
-            run->global->io.outputDir ? run->global->io.outputDir : run->global->io.inputDir,
-            run->dynfile->path);
-        unlink(fname);
+    } else {
+        ATOMIC_POST_INC(run->global->cnts.mutationsWithoutNewCov);
+        if (run->dynfile->imported) {
+            /* Remove useless imported inputs from corpus */
+            LOG_D("Removing useless imported file: %s", run->dynfile->path);
+            char fname[PATH_MAX];
+            snprintf(fname, PATH_MAX, "%s/%s",
+                run->global->io.outputDir ? run->global->io.outputDir : run->global->io.inputDir,
+                run->dynfile->path);
+            unlink(fname);
+        }
     }
 }
 

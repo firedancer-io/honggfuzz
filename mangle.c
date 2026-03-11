@@ -907,8 +907,10 @@ static void mangle_Resize(run_t* run, bool printable) {
      */
     uint64_t choice = util_rndGet(0, 32);
     switch (choice) {
-    case 0: /* Set new size arbitrarily */
-        newsz = (ssize_t)util_rndGet(1, run->global->mutate.maxInputSz);
+    case 0: { /* Set new size arbitrarily */
+        size_t lo = run->global->io.minFileSz > 0 ? run->global->io.minFileSz : 1;
+        newsz = (ssize_t)util_rndGet(lo, run->global->mutate.maxInputSz);
+    }
         break;
     case 1 ... 4: /* Increase size by a small value */
         newsz = oldsz + (ssize_t)util_rndGet(0, 8);
@@ -926,7 +928,9 @@ static void mangle_Resize(run_t* run, bool printable) {
         newsz = oldsz;
         break;
     }
-    if (newsz < 1) {
+    if (run->global->io.minFileSz > 0 && newsz < (ssize_t)run->global->io.minFileSz) {
+        newsz = (ssize_t)run->global->io.minFileSz;
+    } else if (newsz < 1) {
         newsz = 1;
     }
     if (newsz > (ssize_t)run->global->mutate.maxInputSz) {
@@ -1619,25 +1623,51 @@ done:
  * mutations: varint value changes, fixed-width arithmetic, field deletion,
  * duplication, reordering, payload byte flips, and tag reassignment.
  */
-static void mangle_ProtoMutate(run_t* run, bool printable) {
-    if (run->dynfile->size < 2) {
-        mangle_Bytes(run, printable);
-        return;
+static void mangle_ProtoGentleFallback(run_t* run, bool printable) {
+    if (run->dynfile->size == 0) return;
+
+    /*
+     * Try scanning from multiple offsets to recover from corrupted leading
+     * bytes.  When a scan succeeds, flip a bit only inside a field VALUE
+     * region (avoiding tag and length-prefix bytes) to preserve wire-format
+     * structure.  Falls back to a random bit flip only when all attempts fail.
+     */
+    proto_field_t fields[128];
+    for (size_t skip = 0; skip <= 8 && skip < run->dynfile->size; skip++) {
+        size_t fc = proto_scan_fields(
+            run->dynfile->data + skip, run->dynfile->size - skip, fields, ARRAYSIZE(fields));
+        if (fc >= 1) {
+            proto_field_t* f = &fields[util_rndGet(0, fc - 1)];
+            size_t val_start = skip + f->val_off;
+            size_t val_end   = val_start + f->val_len;
+            if (val_end > run->dynfile->size) val_end = run->dynfile->size;
+            if (val_start < val_end) {
+                size_t off = val_start + util_rndGet(0, val_end - val_start - 1);
+                run->dynfile->data[off] ^= (uint8_t)(1u << util_rndGet(0, 7));
+                if (printable) util_turnToPrintable(&run->dynfile->data[off], 1);
+                return;
+            }
+        }
     }
 
-    uint8_t first = run->dynfile->data[0];
-    uint8_t wt    = first & 0x07;
-    if (wt > 5 || wt == 3 || wt == 4 || first == 0) {
-        mangle_Bytes(run, printable);
+    size_t off = util_rndGet(0, run->dynfile->size - 1);
+    run->dynfile->data[off] ^= (uint8_t)(1u << util_rndGet(0, 7));
+    if (printable) util_turnToPrintable(&run->dynfile->data[off], 1);
+}
+
+static void mangle_ProtoMutate(run_t* run, bool printable) {
+    if (run->dynfile->size < 2) {
+        mangle_ProtoGentleFallback(run, printable);
         return;
     }
 
     proto_field_t fields[128];
     size_t fc = proto_scan_fields(run->dynfile->data, run->dynfile->size, fields, ARRAYSIZE(fields));
     if (fc < 1) {
-        mangle_Bytes(run, printable);
+        mangle_ProtoGentleFallback(run, printable);
         return;
     }
+    ATOMIC_POST_INC(run->global->mutate.protoScanOkCnt);
 
     switch (util_rndGet(0, 7)) {
     case 0:
@@ -1649,7 +1679,7 @@ static void mangle_ProtoMutate(run_t* run, bool printable) {
             if (fields[i].wire_type == 0) vi[vc++] = i;
         }
         if (vc == 0) {
-            mangle_Bytes(run, printable);
+            mangle_ProtoGentleFallback(run, printable);
             return;
         }
 
@@ -1717,7 +1747,7 @@ static void mangle_ProtoMutate(run_t* run, bool printable) {
             if (fields[i].wire_type == 1 || fields[i].wire_type == 5) fi[fic++] = i;
         }
         if (fic == 0) {
-            mangle_Bytes(run, printable);
+            mangle_ProtoGentleFallback(run, printable);
             return;
         }
 
@@ -1730,7 +1760,7 @@ static void mangle_ProtoMutate(run_t* run, bool printable) {
     case 3: {
         /* Delete a random field */
         if (fc < 2) {
-            mangle_Bytes(run, printable);
+            mangle_ProtoGentleFallback(run, printable);
             return;
         }
 
@@ -1748,7 +1778,7 @@ static void mangle_ProtoMutate(run_t* run, bool printable) {
         proto_field_t* f     = &fields[util_rndGet(0, fc - 1)];
         size_t         total = f->tag_len + f->val_len;
         if (run->dynfile->size + total > run->global->mutate.maxInputSz) {
-            mangle_Bytes(run, printable);
+            mangle_ProtoGentleFallback(run, printable);
             return;
         }
 
@@ -1764,7 +1794,7 @@ static void mangle_ProtoMutate(run_t* run, bool printable) {
     case 5: {
         /* Swap two random fields */
         if (fc < 2) {
-            mangle_Bytes(run, printable);
+            mangle_ProtoGentleFallback(run, printable);
             return;
         }
 
@@ -1782,7 +1812,7 @@ static void mangle_ProtoMutate(run_t* run, bool printable) {
         size_t         len1 = f1->tag_len + f1->val_len;
         size_t         len2 = f2->tag_len + f2->val_len;
         if (len1 > 1024 || len2 > 1024) {
-            mangle_Bytes(run, printable);
+            mangle_ProtoGentleFallback(run, printable);
             return;
         }
 
@@ -1820,7 +1850,7 @@ static void mangle_ProtoMutate(run_t* run, bool printable) {
             if (fields[i].wire_type == 2 && fields[i].val_len > 1) li[lc++] = i;
         }
         if (lc == 0) {
-            mangle_Bytes(run, printable);
+            mangle_ProtoGentleFallback(run, printable);
             return;
         }
 
@@ -1828,7 +1858,7 @@ static void mangle_ProtoMutate(run_t* run, bool printable) {
         uint64_t       pl;
         size_t         lb = proto_decode_varint(run->dynfile->data, run->dynfile->size, f->val_off, &pl);
         if (lb == 0 || pl == 0) {
-            mangle_Bytes(run, printable);
+            mangle_ProtoGentleFallback(run, printable);
             return;
         }
 
@@ -2273,10 +2303,16 @@ static void (*const mangleFuncs[MANGLE_COUNT])(run_t*, bool) = {
 };
 
 static inline void mangle_dispatch(run_t* run, mangle_t m, bool printable) {
-    mangleFuncs[mangle_sanitize(run, m)](run, printable);
+    mangle_t sm = mangle_sanitize(run, m);
+    if (mangleFuncs[sm]) {
+        mangleFuncs[sm](run, printable);
+    } else {
+        mangleFuncs[MANGLE_BYTES](run, printable);
+    }
 }
 
 void mangle_mangleContent(run_t* run) {
+    ATOMIC_POST_INC(run->global->mutate.totalRoundCnt);
     if (run->mutationsPerRun == 0U) {
         return;
     }
@@ -2305,21 +2341,32 @@ void mangle_mangleContent(run_t* run) {
      * proto-aware rounds achieve ~100% parse rate while blind rounds provide
      * full mutation variety for exploration.
      *
-     * Probability: ~67% proto-aware round, ~50% flatbuf-aware round
-     * (when format heuristic matches).  Remaining rounds get full blind
-     * exploration for edge/path discovery via structural mutations.
+     * Probability: ~75% proto-aware round, ~67% flatbuf-aware round.
+     * Remaining rounds get full blind exploration for edge/path discovery
+     * via structural mutations.
+     *
+     * Format heuristic gates the probability check: the first byte must
+     * look like a valid protobuf tag (wire type 0-2, field 1-15) or a
+     * valid flatbuffer root offset.  When the heuristic rejects an
+     * input, it gets a normal blind round — no proto overhead.
+     *
+     * Inside mangle_ProtoMutate, if the full scanner fails on a
+     * heuristic-passing input, the fallback is a gentle bit flip (not
+     * destructive mangle_Bytes) to avoid worsening corrupted inputs.
      */
     mangle_t format_override = MANGLE_COUNT; /* MANGLE_COUNT = no override */
     if (!run->global->exe.useCustomMutator && run->dynfile->size >= 8) {
         uint8_t first = run->dynfile->data[0];
         uint8_t wt    = first & 0x07;
-        if (wt <= 2 && first >= 0x08 && first <= 0x7F && util_rnd64() % 3 != 0) {
+        if (wt <= 2 && first >= 0x08 && first <= 0x7F && util_rnd64() % 4 != 0) {
             format_override = MANGLE_PROTO_MUTATE;
+            ATOMIC_POST_INC(run->global->mutate.protoRoundCnt);
         } else if (run->dynfile->size >= 12) {
             uint32_t ro;
             memcpy(&ro, run->dynfile->data, 4);
-            if (ro >= 4 && ro < run->dynfile->size - 4 && util_rnd64() % 2 == 0) {
+            if (ro >= 4 && ro < run->dynfile->size - 4) {
                 format_override = MANGLE_FLATBUF_MUTATE;
+                ATOMIC_POST_INC(run->global->mutate.protoRoundCnt);
             }
         }
     }

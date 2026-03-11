@@ -63,8 +63,8 @@ echo "============================================================"
 echo ""
 
 # ---- Build ----
-echo "1. Building test target with trace-pc-guard and trace-cmp..."
-if ! ./hfuzz_cc/hfuzz-cc -fsanitize-coverage=trace-pc-guard,trace-cmp \
+echo "1. Building test target with trace-pc-guard, inline-8bit-counters, and trace-cmp..."
+if ! ./hfuzz_cc/hfuzz-cc -fsanitize-coverage=trace-pc-guard,inline-8bit-counters,trace-cmp \
         -o tests/test_edge_bucket_target tests/test_edge_bucket_target.c 2>&1; then
     fail "Failed to build test target"
     exit 1

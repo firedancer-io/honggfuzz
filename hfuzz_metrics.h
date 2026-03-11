@@ -285,12 +285,25 @@ void hfuzz_metrics_log_stats(
  * proto_parse_successes:    Calls where LoadProtoInput returned true
  * custom_mutator_calls:     LLVMFuzzerCustomMutator invocations
  * custom_mutator_successes: Custom mutator calls that returned >0 bytes
+ * proto_round_cnt:          mangle_mangleContent rounds using proto-aware mutation
+ * proto_scan_ok_cnt:        proto_scan_fields calls that found >= 1 field
+ * total_round_cnt:          Total mangle_mangleContent calls
  */
 void hfuzz_metrics_log_mutation_health(
     uint64_t proto_parse_calls,
     uint64_t proto_parse_successes,
     uint64_t custom_mutator_calls,
-    uint64_t custom_mutator_successes
+    uint64_t custom_mutator_successes,
+    uint64_t proto_round_cnt,
+    uint64_t proto_scan_ok_cnt,
+    uint64_t total_round_cnt,
+    uint64_t lpm_mutate_cnt,
+    uint64_t lpm_crossover_cnt,
+    uint64_t lpm_parse_fail_cnt,
+    uint64_t postprocessor_cnt,
+    uint64_t elf_fixup_ok_cnt,
+    uint64_t exec_fail_cnt,
+    uint64_t verify_cnt
 );
 
 #ifdef __cplusplus

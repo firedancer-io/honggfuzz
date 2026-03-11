@@ -33,7 +33,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "1. Building test target with instrumentation..."
-./hfuzz_cc/hfuzz-cc -fsanitize-coverage=trace-pc-guard,trace-cmp \
+./hfuzz_cc/hfuzz-cc -fsanitize-coverage=trace-pc-guard,inline-8bit-counters,trace-cmp \
     -o tests/test_target tests/test_target.c
 echo -e "${GREEN}   [OK] Test target built${NC}"
 echo ""

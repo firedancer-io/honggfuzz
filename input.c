@@ -832,6 +832,8 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                     {
                         feedback_t* cov = hfuzz->feedback.covFeedbackMap;
                         uint64_t ppCalls = 0, ppSucc = 0, cmCalls = 0, cmSucc = 0;
+                        uint64_t lpmMutate = 0, lpmCrossOver = 0, lpmParseFail = 0;
+                        uint64_t postProc = 0, elfFixupOk = 0, execFail = 0, verifyCalls = 0;
                         if (cov) {
                             for (size_t t = 0; t < hfuzz->threads.threadsMax; t++) {
                                 ppCalls += cov->pidProtoParseCallsCnt[t].val;
@@ -839,12 +841,28 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                                 cmCalls += cov->pidCustomMutatorCallsCnt[t].val;
                                 cmSucc  += cov->pidCustomMutatorSuccessesCnt[t].val;
                                 childTruncated += cov->pidInputsTruncatedCnt[t].val;
+                                lpmMutate    += cov->pidLpmMutateCnt[t].val;
+                                lpmCrossOver += cov->pidLpmCrossOverCnt[t].val;
+                                lpmParseFail += cov->pidLpmParseFailCnt[t].val;
+                                postProc     += cov->pidPostProcessorCnt[t].val;
+                                elfFixupOk   += cov->pidElfFixupOkCnt[t].val;
+                                execFail     += cov->pidExecFailCnt[t].val;
+                                verifyCalls  += cov->pidVerifyCnt[t].val;
                             }
                         }
                         float parseRate = ppCalls > 0 ? ((float)ppSucc / (float)ppCalls * 100.0f) : 0.0f;
-                        LOG_I("[MUTATION-HEALTH] proto_parse=%zu/%zu (%.1f%%) custom_mutator=%zu/%zu",
+                        uint64_t protoRounds = ATOMIC_GET(hfuzz->mutate.protoRoundCnt);
+                        uint64_t protoScanOk = ATOMIC_GET(hfuzz->mutate.protoScanOkCnt);
+                        uint64_t totalRounds = ATOMIC_GET(hfuzz->mutate.totalRoundCnt);
+                        LOG_I("[MUTATION-HEALTH] proto_parse=%zu/%zu (%.1f%%) custom_mutator=%zu/%zu"
+                              " proto_rounds=%zu/%zu scan_ok=%zu"
+                              " lpm_mut=%zu xover=%zu parse_fail=%zu"
+                              " postproc=%zu elf_ok=%zu exec_fail=%zu verify=%zu",
                               (size_t)ppSucc, (size_t)ppCalls, (double)parseRate,
-                              (size_t)cmSucc, (size_t)cmCalls);
+                              (size_t)cmSucc, (size_t)cmCalls,
+                              (size_t)protoRounds, (size_t)totalRounds, (size_t)protoScanOk,
+                              (size_t)lpmMutate, (size_t)lpmCrossOver, (size_t)lpmParseFail,
+                              (size_t)postProc, (size_t)elfFixupOk, (size_t)execFail, (size_t)verifyCalls);
                     }
 
                     /* Defer the metrics bridge call until after the rwlock is released.
@@ -978,14 +996,29 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         feedback_t* cov = run->global->feedback.covFeedbackMap;
         if (cov) {
             uint64_t ppCalls = 0, ppSucc = 0, cmCalls = 0, cmSucc = 0;
+            uint64_t lpmMut = 0, lpmXover = 0, lpmFail = 0;
+            uint64_t postProc = 0, elfOk = 0, execFail = 0, verify = 0;
             for (size_t t = 0; t < run->global->threads.threadsMax; t++) {
-                ppCalls += cov->pidProtoParseCallsCnt[t].val;
-                ppSucc  += cov->pidProtoParseSuccessesCnt[t].val;
-                cmCalls += cov->pidCustomMutatorCallsCnt[t].val;
-                cmSucc  += cov->pidCustomMutatorSuccessesCnt[t].val;
+                ppCalls  += cov->pidProtoParseCallsCnt[t].val;
+                ppSucc   += cov->pidProtoParseSuccessesCnt[t].val;
+                cmCalls  += cov->pidCustomMutatorCallsCnt[t].val;
+                cmSucc   += cov->pidCustomMutatorSuccessesCnt[t].val;
+                lpmMut   += cov->pidLpmMutateCnt[t].val;
+                lpmXover += cov->pidLpmCrossOverCnt[t].val;
+                lpmFail  += cov->pidLpmParseFailCnt[t].val;
+                postProc += cov->pidPostProcessorCnt[t].val;
+                elfOk    += cov->pidElfFixupOkCnt[t].val;
+                execFail += cov->pidExecFailCnt[t].val;
+                verify   += cov->pidVerifyCnt[t].val;
             }
             if (ppCalls > 0 || cmCalls > 0) {
-                hfuzz_metrics_log_mutation_health(ppCalls, ppSucc, cmCalls, cmSucc);
+                uint64_t protoRounds = ATOMIC_GET(run->global->mutate.protoRoundCnt);
+                uint64_t protoScanOk = ATOMIC_GET(run->global->mutate.protoScanOkCnt);
+                uint64_t totalRounds = ATOMIC_GET(run->global->mutate.totalRoundCnt);
+                hfuzz_metrics_log_mutation_health(ppCalls, ppSucc, cmCalls, cmSucc,
+                                                  protoRounds, protoScanOk, totalRounds,
+                                                  lpmMut, lpmXover, lpmFail,
+                                                  postProc, elfOk, execFail, verify);
             }
         }
     }

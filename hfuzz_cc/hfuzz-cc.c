@@ -320,7 +320,9 @@ static bool getLibPath(
 
     ptrdiff_t len   = (uintptr_t)end - (uintptr_t)start;
     uint64_t  crc64 = util_CRC64(start, len);
-    snprintf(path, PATH_MAX, "/tmp/%s.%d.%" PRIx64 ".a", name, geteuid(), crc64);
+    const char* tmpdir = getenv("TMPDIR");
+    if (!tmpdir) tmpdir = "/tmp";
+    snprintf(path, PATH_MAX, "%s/%s.%d.%" PRIx64 ".a", tmpdir, name, geteuid(), crc64);
 
     /* Does the library exist, belongs to the user, and is of expected size? */
     struct stat st;
@@ -329,8 +331,9 @@ static bool getLibPath(
     }
 
     /* If not, create it with atomic rename() */
-    char template[] = "/tmp/lib.honggfuzz.a.XXXXXX";
-    int  fd         = TEMP_FAILURE_RETRY(mkostemp(template, O_CLOEXEC));
+    char template[PATH_MAX];
+    snprintf(template, sizeof(template), "%s/lib.honggfuzz.a.XXXXXX", tmpdir);
+    int  fd = TEMP_FAILURE_RETRY(mkostemp(template, O_CLOEXEC));
     if (fd == -1) {
         PLOG_E("mkostemp('%s')", template);
         return false;

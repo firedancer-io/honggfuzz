@@ -421,10 +421,12 @@ int files_createSharedMem(size_t sz, const char* name, bool exportmap) {
     }
 #endif /* !defined(_HF_ARCH_DARWIN) && !defined(__ANDROID__) */
 
-    /* As the last resort, create a file in /tmp */
+    /* As the last resort, create a file in TMPDIR (or /tmp) */
     if (fd == -1) {
+        const char* tmpdir = getenv("TMPDIR");
+        if (!tmpdir) tmpdir = "/tmp";
         char template[PATH_MAX];
-        snprintf(template, sizeof(template), "/tmp/%s.XXXXXX", name);
+        snprintf(template, sizeof(template), "%s/%s.XXXXXX", tmpdir, name);
         if ((fd = mkostemp(template, O_CLOEXEC)) == -1) {
             PLOG_W("mkstemp('%s')", template);
             return -1;

@@ -242,6 +242,10 @@ __attribute__((weak)) int HonggfuzzNetDriverArgsForServer(
  * of a main program. Return empty array (length 0) to not use tmpfs.
  */
 __attribute__((weak)) int HonggfuzzNetDriverTempdir(char* str, size_t size) {
+    const char* tmpdir = getenv("TMPDIR");
+    if (tmpdir) {
+        return snprintf(str, size, "%s/HFND_TMP_DIR", tmpdir);
+    }
     return snprintf(str, size, "%s", HFND_TMP_DIR);
 }
 
@@ -278,7 +282,12 @@ static uint16_t netDriver_getTCPPort(int argc, char** argv) {
 static const char* netDriver_getSockPath(int argc HF_ATTR_UNUSED, char** argv HF_ATTR_UNUSED) {
     char tmpdir[PATH_MAX] = {};
     if (HonggfuzzNetDriverTempdir(tmpdir, sizeof(tmpdir)) == -1) {
-        snprintf(tmpdir, sizeof(tmpdir), HFND_TMP_DIR);
+        const char* envtmp = getenv("TMPDIR");
+        if (envtmp) {
+            snprintf(tmpdir, sizeof(tmpdir), "%s/HFND_TMP_DIR", envtmp);
+        } else {
+            snprintf(tmpdir, sizeof(tmpdir), HFND_TMP_DIR);
+        }
     }
 
     static __thread char path[PATH_MAX] = {};

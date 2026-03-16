@@ -469,7 +469,7 @@ static bool fuzz_fetchInput(run_t* run) {
     {
         static time_t lastStatsTime = 0;
         time_t now = time(NULL);
-        if (now - lastStatsTime >= 15
+        if (now - lastStatsTime >= 150
             && fuzz_getState(run->global) != _HF_STATE_DYNAMIC_MAIN) {
             lastStatsTime = now;
             honggfuzz_t* hfuzz = run->global;

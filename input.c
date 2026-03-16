@@ -685,12 +685,12 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         }
         #undef TOP_CANDIDATES
 
-        /* Instrumentation: log selection stats every 15 seconds.
+        /* Instrumentation: log selection stats every 150 seconds.
          * time(NULL) is a vDSO call on Linux — effectively free. */
         {
             time_t logNow = time(NULL);
             time_t lastLog = ATOMIC_GET(lastLogTime);
-            if (logNow - lastLog >= 15) {
+            if (logNow - lastLog >= 150) {
                 ATOMIC_SET(lastLogTime, logNow);
                 uint64_t repeat = ATOMIC_GET(phase1Repeat);
                 uint64_t high = ATOMIC_GET(phase1HighEnergy);

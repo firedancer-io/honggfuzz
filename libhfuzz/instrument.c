@@ -1430,3 +1430,32 @@ void instrumentAddConstStrN(const char* s, size_t n) {
 bool instrumentConstAvail(void) {
     return (ATOMIC_GET(globalCmpFeedback) != NULL);
 }
+
+/*
+ * Mutation health counter accessors for HF_ITER-based fuzzers (e.g. Rust
+ * cargo-hfuzz binaries) that bypass HonggfuzzPersistentLoop / HonggfuzzRunOneInput.
+ *
+ * These write to the same globalCovFeedback shared memory slots that
+ * persistent.c:150-170 writes for LLVMFuzzerTestOneInput-based harnesses.
+ * The honggfuzz parent sums per-thread slots and passes them to
+ * hfuzz_metrics_log_mutation_health() (input.c:998-1022).
+ */
+void instrumentReportProtoParseCall(void) {
+    globalCovFeedback->pidProtoParseCallsCnt[my_thread_no].val++;
+}
+
+void instrumentReportProtoParseSuccess(void) {
+    globalCovFeedback->pidProtoParseSuccessesCnt[my_thread_no].val++;
+}
+
+void instrumentReportExecFail(void) {
+    globalCovFeedback->pidExecFailCnt[my_thread_no].val++;
+}
+
+void instrumentReportVerify(void) {
+    globalCovFeedback->pidVerifyCnt[my_thread_no].val++;
+}
+
+void instrumentReportElfFixupOk(void) {
+    globalCovFeedback->pidElfFixupOkCnt[my_thread_no].val++;
+}

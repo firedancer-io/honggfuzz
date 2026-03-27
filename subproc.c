@@ -36,6 +36,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include "arch.h"
@@ -582,7 +583,7 @@ void subproc_checkTermination(run_t* run) {
 }
 
 /* ---- Host + cgroup memory monitoring (shared across threads) ---- */
-static bool    rss_init_done = false;
+static pthread_once_t rss_init_once = PTHREAD_ONCE_INIT;
 static int64_t rss_host_total_bytes = 0;
 static bool    rss_cgroup_available = false;
 static char    rss_cg_current_path[PATH_MAX];
@@ -687,12 +688,8 @@ void subproc_checkRssLimit(run_t* run) {
         return;
     }
 
-    /* One-time init (first thread to reach here wins) */
-    bool expected = false;
-    if (__atomic_compare_exchange_n(&rss_init_done, &expected, true,
-                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        subproc_rssInit();
-    }
+    /* One-time init (pthread_once handles thread-safety and visibility) */
+    pthread_once(&rss_init_once, subproc_rssInit);
 
     int64_t child_rss = subproc_readChildRss(run->pid);
     if (child_rss < 0) {

@@ -384,6 +384,8 @@ void display_display(honggfuzz_t* hfuzz) {
         ATOMIC_GET(hfuzz->cnts.verifiedCrashesCnt));
     display_put("    Timeouts : " ESC_BOLD "%" _HF_NONMON_SEP "zu" ESC_RESET " [%lu sec]\n",
         ATOMIC_GET(hfuzz->cnts.timeoutedCnt), (unsigned long)hfuzz->timing.tmOut);
+    display_put("   RSS Kills : " ESC_BOLD "%" _HF_NONMON_SEP "zu" ESC_RESET "\n",
+        ATOMIC_GET(hfuzz->cnts.rssKilledCnt));
 
     size_t truncatedTooLarge = ATOMIC_GET(hfuzz->cnts.inputsTruncatedTooLarge);
     if (hfuzz->feedback.covFeedbackMap) {

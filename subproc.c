@@ -645,8 +645,8 @@ static void subproc_rssInit(void) {
 
             int64_t cg_max = subproc_readInt64FromFile(rss_cg_max_path);
             if (cg_max > 0) {
-                ATOMIC_SET(rss_cg_max_bytes, cg_max);
-                ATOMIC_SET(rss_cgroup_available, true);
+                __atomic_store_n(&rss_cg_max_bytes, cg_max, __ATOMIC_RELEASE);
+                __atomic_store_n(&rss_cgroup_available, true, __ATOMIC_RELEASE);
             }
 
             LOG_I("RSS monitor: host_total=%" PRId64 " MB, cgroup_max=%" PRId64 " MB",

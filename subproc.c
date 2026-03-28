@@ -705,6 +705,28 @@ void subproc_checkRssLimit(run_t* run) {
         return;
     }
 
+    /* --- Periodic ambient memory stats (~60s, shared across threads) --- */
+    {
+        static time_t s_last_mem_log = 0;
+        time_t now = time(NULL);
+        if (now - s_last_mem_log >= 60) {
+            s_last_mem_log = now;
+            int64_t host_avail = subproc_readHostAvailable();
+            int64_t cg_current = ATOMIC_GET(rss_cgroup_available)
+                ? subproc_readInt64FromFile(rss_cg_current_path) : -1;
+            int64_t cg_max = ATOMIC_GET(rss_cg_max_bytes);
+            LOG_I("RSS monitor: child_rss=%" PRId64 " MB, host_avail=%" PRId64 " MB, "
+                  "cg=%" PRId64 "/%" PRId64 " MB, rlimit_rss=%" PRIu64 " MB, "
+                  "rss_kills=%" PRIu64,
+                  child_rss / (1024*1024),
+                  host_avail >= 0 ? host_avail / (1024*1024) : (int64_t)-1,
+                  cg_current >= 0 ? cg_current / (1024*1024) : (int64_t)-1,
+                  cg_max > 0 ? cg_max / (1024*1024) : (int64_t)-1,
+                  (uint64_t)run->global->exe.rssLimit,
+                  (uint64_t)ATOMIC_GET(run->global->cnts.rssKilledCnt));
+        }
+    }
+
     bool should_kill = false;
     bool is_hard_cap = false;
     bool is_cgroup_pressure = false;

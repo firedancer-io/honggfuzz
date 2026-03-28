@@ -306,6 +306,27 @@ void hfuzz_metrics_log_mutation_health(
     uint64_t verify_cnt
 );
 
+/*
+ * Log memory health metrics for timeseries monitoring.
+ * Called periodically from input.c alongside hfuzz_metrics_log_stats().
+ * Populates the memory_events ClickHouse table via the metrics bridge.
+ *
+ * children_rss_mb:    sum of all child process RSS (MB)
+ * host_available_mb:  /proc/meminfo MemAvailable (MB), -1 if unavailable
+ * cgroup_current_mb:  cgroup memory.current (MB), -1 if unavailable
+ * cgroup_max_mb:      cgroup memory.max (MB), -1 if unavailable
+ * rss_killed_cnt:     cumulative count of children killed for RSS limit
+ * rlimit_rss_mb:      configured --rlimit_rss value (MB)
+ */
+void hfuzz_metrics_log_memory(
+    int64_t  children_rss_mb,
+    int64_t  host_available_mb,
+    int64_t  cgroup_current_mb,
+    int64_t  cgroup_max_mb,
+    uint64_t rss_killed_cnt,
+    uint64_t rlimit_rss_mb
+);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

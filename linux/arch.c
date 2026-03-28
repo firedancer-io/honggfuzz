@@ -232,6 +232,12 @@ static bool arch_checkWait(run_t* run) {
         arch_traceAnalyze(run, status, pid);
 
         if (pid == run->pid && (WIFEXITED(status) || WIFSIGNALED(status))) {
+            if (WIFSIGNALED(status) && WTERMSIG(status) == SIGBUS) {
+                LOG_W("Child pid=%d died from SIGBUS (signal %d). "
+                      "Possible causes: cgroup OOM, mmap'd file truncation, "
+                      "or demand-paged mapping failure",
+                      (int)run->pid, WTERMSIG(status));
+            }
             if (run->global->exe.persistent) {
                 if (!fuzz_isTerminating()) {
                     LOG_W("Persistent mode: pid=%d exited with status: %s", (int)run->pid,

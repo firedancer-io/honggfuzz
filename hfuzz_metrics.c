@@ -59,6 +59,9 @@ static register_coverage_feedback_fn fn_register_coverage_feedback = NULL;
 static log_mutation_health_fn  fn_log_mutation_health = NULL;
 static log_stats_fn            fn_log_stats = NULL;
 
+typedef void (*log_memory_fn)(int64_t, int64_t, int64_t, int64_t, uint64_t, uint64_t);
+static log_memory_fn           fn_log_memory = NULL;
+
 static bool s_resolved = false;
 
 /*
@@ -86,6 +89,7 @@ static void resolve_metrics_functions(void) {
     fn_register_coverage_feedback = (register_coverage_feedback_fn)dlsym(RTLD_DEFAULT, "hfuzz_metrics_bridge_register_coverage_feedback");
     fn_log_mutation_health = (log_mutation_health_fn)dlsym(RTLD_DEFAULT, "hfuzz_metrics_bridge_log_mutation_health");
     fn_log_stats = (log_stats_fn)dlsym(RTLD_DEFAULT, "hfuzz_metrics_bridge_log_stats");
+    fn_log_memory = (log_memory_fn)dlsym(RTLD_DEFAULT, "hfuzz_metrics_bridge_log_memory");
 
     if (fn_session_init) {
         fprintf(stderr, "[hfuzz_metrics] Found metrics bridge library, metrics enabled\n");
@@ -276,5 +280,21 @@ void hfuzz_metrics_log_mutation_health(
                                lpm_mutate_cnt, lpm_crossover_cnt, lpm_parse_fail_cnt,
                                postprocessor_cnt, elf_fixup_ok_cnt,
                                exec_fail_cnt, verify_cnt);
+    }
+}
+
+void hfuzz_metrics_log_memory(
+    int64_t  children_rss_mb,
+    int64_t  host_available_mb,
+    int64_t  cgroup_current_mb,
+    int64_t  cgroup_max_mb,
+    uint64_t rss_killed_cnt,
+    uint64_t rlimit_rss_mb
+) {
+    resolve_metrics_functions();
+    if (fn_log_memory) {
+        fn_log_memory(children_rss_mb, host_available_mb,
+                      cgroup_current_mb, cgroup_max_mb,
+                      rss_killed_cnt, rlimit_rss_mb);
     }
 }

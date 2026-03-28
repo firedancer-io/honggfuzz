@@ -991,6 +991,79 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
             s->inputsTruncatedTooLarge
         );
 
+        /* Log memory health metrics to ClickHouse via the metrics bridge.
+         * Read host and cgroup stats inline — subproc.c statics aren't accessible. */
+        {
+            int64_t _host_avail_mb = -1;
+            FILE* _mi = fopen("/proc/meminfo", "r");
+            if (_mi) {
+                char _mline[256];
+                while (fgets(_mline, sizeof(_mline), _mi)) {
+                    int64_t _val;
+                    if (sscanf(_mline, "MemAvailable: %" PRId64 " kB", &_val) == 1) {
+                        _host_avail_mb = _val / 1024;
+                        break;
+                    }
+                }
+                fclose(_mi);
+            }
+
+            /* Use the current thread's child RSS as a sample (the caller
+             * is one of the fuzzing threads, so run->pid is its child). */
+            int64_t _children_rss_mb = 0;
+            if (run->pid > 0) {
+                char _spath[64];
+                snprintf(_spath, sizeof(_spath), "/proc/%d/statm", (int)run->pid);
+                FILE* _sf = fopen(_spath, "r");
+                if (_sf) {
+                    long _pages = 0;
+                    if (fscanf(_sf, "%*ld %ld", &_pages) == 1) {
+                        _children_rss_mb = _pages * sysconf(_SC_PAGESIZE) / (1024 * 1024);
+                    }
+                    fclose(_sf);
+                }
+            }
+
+            /* Read own cgroup's memory.current and memory.max */
+            int64_t _cg_cur_mb = -1, _cg_max_mb = -1;
+            FILE* _cgf = fopen("/proc/self/cgroup", "r");
+            if (_cgf) {
+                char _cgline[PATH_MAX];
+                char _cgpath[PATH_MAX] = "";
+                while (fgets(_cgline, sizeof(_cgline), _cgf)) {
+                    if (strncmp(_cgline, "0::", 3) == 0) {
+                        char* _nl = strchr(_cgline + 3, '\n');
+                        if (_nl) *_nl = '\0';
+                        snprintf(_cgpath, sizeof(_cgpath), "%s", _cgline + 3);
+                        break;
+                    }
+                }
+                fclose(_cgf);
+                if (_cgpath[0] != '\0') {
+                    char _cg_cur_file[PATH_MAX], _cg_max_file[PATH_MAX];
+                    snprintf(_cg_cur_file, sizeof(_cg_cur_file), "/sys/fs/cgroup%s/memory.current", _cgpath);
+                    snprintf(_cg_max_file, sizeof(_cg_max_file), "/sys/fs/cgroup%s/memory.max", _cgpath);
+                    FILE* _f;
+                    int64_t _v;
+                    if ((_f = fopen(_cg_cur_file, "r")) != NULL) {
+                        if (fscanf(_f, "%" PRId64, &_v) == 1) _cg_cur_mb = _v / (1024 * 1024);
+                        fclose(_f);
+                    }
+                    if ((_f = fopen(_cg_max_file, "r")) != NULL) {
+                        if (fscanf(_f, "%" PRId64, &_v) == 1) _cg_max_mb = _v / (1024 * 1024);
+                        fclose(_f);
+                    }
+                }
+            }
+
+            hfuzz_metrics_log_memory(
+                _children_rss_mb, _host_avail_mb,
+                _cg_cur_mb, _cg_max_mb,
+                ATOMIC_GET(run->global->cnts.rssKilledCnt),
+                (uint64_t)run->global->exe.rssLimit
+            );
+        }
+
         /* Log mutation health counters from shared memory (written by the
            persistent child process in persistent.c). */
         feedback_t* cov = run->global->feedback.covFeedbackMap;

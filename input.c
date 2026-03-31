@@ -55,12 +55,29 @@ void input_setSize(run_t* run, size_t sz) {
     if (sz > run->global->mutate.maxInputSz) {
         PLOG_F("Too large size requested: %zu > maxSize: %zu", sz, run->global->mutate.maxInputSz);
     }
-    /* ftruncate of a mmaped file fails under CygWin, it's also painfully slow under MacOS X */
-#if !defined(__CYGWIN__) && !defined(_HF_ARCH_DARWIN)
-    if (TEMP_FAILURE_RETRY(ftruncate(run->dynfile->fd, sz)) == -1) {
-        PLOG_W("ftruncate(run->dynfile->fd=%d, sz=%zu)", run->dynfile->fd, sz);
+    /* Never ftruncate the memfd — the mmap is already maxInputSz and all
+     * access is bounded by dynfile->size.  ftruncate down then up decommits
+     * tmpfs pages and on re-growth the page-fault handler can fail to
+     * re-allocate the shmem page, causing SIGBUS (BUS_ADRERR) in the parent.
+     *
+     * Instead, when shrinking, punch a hole to release physical pages beyond
+     * the new size WITHOUT changing the file size.  This avoids both SIGBUS
+     * (file size stays at maxInputSz) and memory waste (pages are freed). */
+#if defined(_HF_ARCH_LINUX)
+    size_t oldSz = run->dynfile->size;
+    if (sz < oldSz) {
+        /* Release pages beyond the new size.  FALLOC_FL_PUNCH_HOLE frees
+         * physical memory while FALLOC_FL_KEEP_SIZE preserves the file size
+         * so that future page faults on re-growth succeed (zero-filled). */
+        off_t hole_start = (off_t)sz;
+        off_t hole_len   = (off_t)(run->global->mutate.maxInputSz - sz);
+        if (hole_len > 0) {
+            fallocate(run->dynfile->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                hole_start, hole_len);
+            /* Ignore failure — worst case we keep the pages resident */
+        }
     }
-#endif /* !defined(__CYGWIN__) && !defined(_HF_ARCH_DARWIN) */
+#endif /* defined(_HF_ARCH_LINUX) */
     run->dynfile->size = sz;
 }
 

@@ -460,17 +460,26 @@ void* files_mapSharedMem(size_t sz, int* fd, const char* name, bool nocore, bool
     if (posix_madvise(ret, sz, POSIX_MADV_RANDOM) == -1) {
         PLOG_W("posix_madvise(sz=%zu, POSIX_MADV_RANDOM)", sz);
     }
+    /* HF_DONTDUMP=0 disables MADV_DONTDUMP/MADV_NOCORE so that core dumps
+     * include shared memory regions (covFeedbackMap, cmpFeedbackMap).
+     * Default behavior (unset or "1") excludes them to keep cores small. */
     if (nocore) {
+        const char* dd_env = getenv("HF_DONTDUMP");
+        bool skip_dontdump = dd_env && (dd_env[0] == '0' || dd_env[0] == 'n' || dd_env[0] == 'N');
+        if (skip_dontdump) {
+            LOG_I("HF_DONTDUMP=0: keeping shared memory '%s' (%zu bytes) in core dumps", name, sz);
+        } else {
 #if defined(MADV_DONTDUMP)
-        if (madvise(ret, sz, MADV_DONTDUMP) == -1) {
-            PLOG_W("madvise(sz=%zu, MADV_DONTDUMP)", sz);
-        }
+            if (madvise(ret, sz, MADV_DONTDUMP) == -1) {
+                PLOG_W("madvise(sz=%zu, MADV_DONTDUMP)", sz);
+            }
 #endif /* defined(MADV_DONTDUMP) */
 #if defined(MADV_NOCORE)
-        if (madvise(ret, sz, MADV_NOCORE) == -1) {
-            PLOG_W("madvise(sz=%zu, MADV_NOCORE)", sz);
-        }
+            if (madvise(ret, sz, MADV_NOCORE) == -1) {
+                PLOG_W("madvise(sz=%zu, MADV_NOCORE)", sz);
+            }
 #endif /* defined(MADV_NOCORE) */
+        }
     }
     return ret;
 }

@@ -1016,8 +1016,8 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                 snprintf(_spath, sizeof(_spath), "/proc/%d/statm", (int)run->pid);
                 FILE* _sf = fopen(_spath, "r");
                 if (_sf) {
-                    long _pages = 0;
-                    if (fscanf(_sf, "%*ld %ld", &_pages) == 1) {
+                    long _virt = 0, _pages = 0;
+                    if (fscanf(_sf, "%ld %ld", &_virt, &_pages) == 2) {
                         _children_rss_mb = _pages * sysconf(_SC_PAGESIZE) / (1024 * 1024);
                     }
                     fclose(_sf);

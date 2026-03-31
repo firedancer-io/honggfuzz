@@ -60,24 +60,9 @@ void input_setSize(run_t* run, size_t sz) {
      * tmpfs pages and on re-growth the page-fault handler can fail to
      * re-allocate the shmem page, causing SIGBUS (BUS_ADRERR) in the parent.
      *
-     * Instead, when shrinking, punch a hole to release physical pages beyond
-     * the new size WITHOUT changing the file size.  This avoids both SIGBUS
-     * (file size stays at maxInputSz) and memory waste (pages are freed). */
-#if defined(_HF_ARCH_LINUX)
-    size_t oldSz = run->dynfile->size;
-    if (sz < oldSz) {
-        /* Release pages beyond the new size.  FALLOC_FL_PUNCH_HOLE frees
-         * physical memory while FALLOC_FL_KEEP_SIZE preserves the file size
-         * so that future page faults on re-growth succeed (zero-filled). */
-        off_t hole_start = (off_t)sz;
-        off_t hole_len   = (off_t)(run->global->mutate.maxInputSz - sz);
-        if (hole_len > 0) {
-            fallocate(run->dynfile->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
-                hole_start, hole_len);
-            /* Ignore failure — worst case we keep the pages resident */
-        }
-    }
-#endif /* defined(_HF_ARCH_LINUX) */
+     * Without ftruncate, pages touched by previous mutations stay resident.
+     * Worst case is maxInputSz per thread (10 MB × 40 = 400 MB with current
+     * Octane config).  CygWin and macOS already skipped the ftruncate. */
     run->dynfile->size = sz;
 }
 

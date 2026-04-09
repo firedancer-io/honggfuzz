@@ -524,7 +524,7 @@ std::string CoverageSymbolizer::resolve_symbol_with_addr2line(uintptr_t pc,
                                           const std::string &binary_path) {
   std::stringstream ss;
   // NOTE: Unset LD_PRELOAD to prevent the metrics bridge library from interfering
-  ss << "env -u LD_PRELOAD addr2line -f -C -e " << binary_path << " 0x" << std::hex << pc;
+  ss << "env -u LD_PRELOAD addr2line -f -C -e " << shell_escape_path(binary_path) << " 0x" << std::hex << pc;
   std::string command = ss.str();
 
   std::array<char, 2048> buffer{};

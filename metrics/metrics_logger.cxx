@@ -179,16 +179,30 @@ private:
 // Constructor and destructor must be defined here where ClickHouseClient is complete
 // (unique_ptr needs complete type for construction and destruction)
 MetricsLogger::MetricsLogger() = default;
-MetricsLogger::~MetricsLogger() = default;
+MetricsLogger::~MetricsLogger() {
+    wait_for_queue_drain_();
+}
 
 // Wait for queue to drain (called during shutdown)
 // Defined here after ClickHouseClient class so client_.reset() has complete type
 void MetricsLogger::wait_for_queue_drain_() {
-    // No background thread to drain in harness-side CH logging (all synchronous)
+    // Signal no new work should be accepted
     m_shutting_down.store(true);
-    
-    // Clean up client
-    client_.reset();
+
+    // Stop the background thread and wait for it to drain the queue
+    if (m_logger_running.exchange(false)) {
+        m_queue_cv.notify_one();            // wake thread so it sees the flag
+        if (m_logger_thread.joinable()) {
+            m_logger_thread.join();
+        }
+        std::cerr << "[MetricsLogger] Background logger thread joined" << std::endl;
+    }
+
+    // Now safe to destroy the client — no other thread is using it
+    {
+        std::lock_guard<std::mutex> lock(m_client_mutex);
+        client_.reset();
+    }
 
     if (vector_enabled_.exchange(false)) {
         vector_sink_.close();
@@ -231,18 +245,23 @@ void MetricsLogger::create_client_and_tables_() {
 }
 
 // Reconnect client (does NOT create tables - they were created in init)
+// Caller must NOT hold m_client_mutex.
 void MetricsLogger::ensure_client_() {
     std::lock_guard<std::mutex> lock(m_client_mutex);
-    
+    ensure_client_unlocked_();
+}
+
+// Same as ensure_client_ but caller must already hold m_client_mutex.
+void MetricsLogger::ensure_client_unlocked_() {
     if (client_ || !ch_.enabled || m_shutting_down.load()) return;
-    
+
     try {
         std::cerr << "[MetricsLogger] Reconnecting to ClickHouse at "
                   << ch_.host << ":" << ch_.port << std::endl;
         client_ = std::make_unique<ClickHouseClient>(ch_);
         std::cerr << "[MetricsLogger] Successfully reconnected to ClickHouse" << std::endl;
     } catch (const std::exception& e) {
-        std::cerr << "[MetricsLogger] ERROR: Failed to reconnect to ClickHouse: " 
+        std::cerr << "[MetricsLogger] ERROR: Failed to reconnect to ClickHouse: "
                   << e.what() << std::endl;
         client_.reset();
         throw;
@@ -308,20 +327,16 @@ void MetricsLogger::ensure_connection() {
     if (!ch_.enabled || m_shutting_down.load()) {
         return;
     }
-    
+
+    std::lock_guard<std::mutex> lock(m_client_mutex);
     try {
         if (!client_) {
-            ensure_client_();
-        } else {
-            // Connection exists, but verify it's still alive by attempting a lightweight operation
-            // We can't easily ping ClickHouse, but we can note that we checked
-            // The actual verification happens on the next Insert
-            std::cerr << "[MetricsLogger] Connection check: client exists" << std::endl;
+            ensure_client_unlocked_();
         }
     } catch (const std::exception& e) {
-        std::cerr << "[MetricsLogger] WARNING: Connection check failed: " << e.what() 
+        std::cerr << "[MetricsLogger] WARNING: Connection check failed: " << e.what()
                   << ", will reconnect on next insert" << std::endl;
-        client_.reset();  // Clear potentially dead connection
+        client_.reset();
     } catch (...) {
         std::cerr << "[MetricsLogger] WARNING: Connection check failed: unknown exception" << std::endl;
         client_.reset();
@@ -331,19 +346,21 @@ void MetricsLogger::ensure_connection() {
 
 #ifdef SOLFUZZ_CLICKHOUSE_ENABLED
 void MetricsLogger::reconnect_if_needed_() {
-    // If client exists, assume it's fine. If it doesn't, ensure_client_ will create it.
-    // This is a lightweight check - actual reconnection happens on Insert errors
-    if (!client_ && ch_.enabled && !m_shutting_down.load()) {
+    if (!ch_.enabled || m_shutting_down.load()) return;
+
+    std::lock_guard<std::mutex> lock(m_client_mutex);
+    if (!client_) {
         try {
-            ensure_client_();
+            ensure_client_unlocked_();
         } catch (...) { } // Connection failed, will be handled by individual Insert calls
     }
 }
 
-// Actual insert implementation (called from background thread)
+// Actual insert implementation (called from background thread).
+// Holds m_client_mutex for the duration of the insert.
 bool MetricsLogger::insert_with_retry_(const std::string& table_name, void* block_ptr, const std::string& operation_desc) {
     if (!ch_.enabled) return false;
-    
+
     // Skip ClickHouse operations during shutdown/atexit to avoid crashes.
     // During atexit, static objects in clickhouse-cpp (like TypeAst cache) may
     // already be destroyed, causing SEGV if we try to insert.
@@ -351,76 +368,68 @@ bool MetricsLogger::insert_with_retry_(const std::string& table_name, void* bloc
         std::cerr << "[MetricsLogger] Skipping insert during shutdown: " << operation_desc << std::endl;
         return false;
     }
-    
+
     // Cast back to Block (we know it's a Block because we control all callers)
     auto& b = *static_cast<clickhouse::Block*>(block_ptr);
-    
+
+    std::lock_guard<std::mutex> lock(m_client_mutex);
+
     // Try insert, with reconnection on connection errors
     for (int attempt = 0; attempt < 2; ++attempt) {
         try {
             if (!client_) {
-                ensure_client_();
+                ensure_client_unlocked_();
             }
 
-            client_->c().Insert(table_name, b);            
-           
-            // Success - log it for important operations (but not for frequent execution_metrics to avoid spam)
-            if (operation_desc.find("execution metrics") == std::string::npos) {
-                // For non-metrics operations, log success (already logged by caller in most cases)
-                // But we can add a verbose log here if needed
-            }
+            client_->c().Insert(table_name, b);
             return true;
         } catch (const std::exception& e) {
             std::string error_msg = e.what();
-            // Check if it's a connection error
             bool is_connection_error = (error_msg.find("closed") != std::string::npos) ||
                                        (error_msg.find("No such file") != std::string::npos) ||
                                        (error_msg.find("Broken pipe") != std::string::npos) ||
                                        (error_msg.find("Connection") != std::string::npos);
-            
-            // Don't reconnect if shutting down
+
             if (m_shutting_down.load()) {
                 std::cerr << "[MetricsLogger] Shutting down, skipping reconnection for " << operation_desc << std::endl;
                 return false;
             }
-            
+
             if (is_connection_error && attempt == 0) {
-                // Connection lost, try to reconnect (only if not shutting down)
-                std::cerr << "[MetricsLogger] Connection lost during " << operation_desc 
+                std::cerr << "[MetricsLogger] Connection lost during " << operation_desc
                           << ", attempting to reconnect..." << std::endl;
-                client_.reset();  // Clear the old connection
-                // Will retry on next iteration
+                client_.reset();
             } else {
-                // Not a connection error, or already retried - log and give up
-                std::cerr << "[MetricsLogger] ERROR: Failed to insert " << operation_desc << ": " 
+                std::cerr << "[MetricsLogger] ERROR: Failed to insert " << operation_desc << ": "
                           << error_msg << std::endl;
                 return false;
             }
         } catch (...) {
-            std::cerr << "[MetricsLogger] ERROR: Failed to insert " << operation_desc 
+            std::cerr << "[MetricsLogger] ERROR: Failed to insert " << operation_desc
                       << ": unknown exception" << std::endl;
             return false;
         }
     }
-    
+
     return false;
 }
 
-// Insert wrapper - does synchronous insert (no async queue)
-// Harness-side CH logging uses synchronous inserts to avoid race conditions
-// during shutdown that cause crashes in clickhouse-cpp's static TypeAst cache.
+// Insert wrapper — moves the Block into a closure and enqueues it for async
+// execution on the background logger thread.  This keeps ClickHouse I/O off
+// the fuzzing hot-path.
 void MetricsLogger::enqueue_insert_(const std::string& table_name, void* block_ptr, const std::string& operation_desc) {
-    // Do synchronous insert directly - avoids race conditions with background thread
-    bool success = insert_with_retry_(table_name, block_ptr, operation_desc);
-    if (success) {
-        auto& b = *static_cast<clickhouse::Block*>(block_ptr);
-        std::cerr << "[MetricsLogger] Successfully inserted " << b.GetRowCount() 
-                  << " rows to " << table_name << std::endl;
-    } else {
-        auto& b = *static_cast<clickhouse::Block*>(block_ptr);
-        std::cerr << "[MetricsLogger] ERROR: Failed to insert " << b.GetRowCount() 
-                  << " rows to " << table_name << std::endl;
-    }
+    // Move the caller's Block into a shared_ptr so the lambda can own it.
+    // (std::function requires copyable captures; unique_ptr would not work.)
+    auto block = std::make_shared<clickhouse::Block>(
+        std::move(*static_cast<clickhouse::Block*>(block_ptr)));
+
+    enqueue_log_([this, table_name, block, operation_desc]() {
+        bool success = insert_with_retry_(table_name, block.get(), operation_desc);
+        if (!success) {
+            std::cerr << "[MetricsLogger] ERROR: Failed to insert " << block->GetRowCount()
+                      << " rows to " << table_name << std::endl;
+        }
+    }, operation_desc);
 }
 
 // Table schema definition structure
@@ -1080,7 +1089,6 @@ void MetricsLogger::log_session_event(
 
     std::string event_desc = "session " + event_type + " event";
 
-    // All inserts are synchronous in harness-side CH logging (no background thread)
     enqueue_insert_("session_events", &b, event_desc);
 #endif
 }

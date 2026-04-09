@@ -200,12 +200,13 @@ static bool read_pc_table_from_shm() {
     std::cerr << "[hfuzz_metrics_bridge] read_pc_table_from_shm: num_modules=" << num_modules
               << ", next_write=" << next_write << std::endl;
 
-    // Debug to file
-    FILE* dbg = fopen("/tmp/shm_debug.log", "a");
-    if (dbg) {
-        fprintf(dbg, "[read_pc_table_from_shm] pid=%d, num_modules=%lu, next_write=%lu, header_size=%lu\n",
-                getpid(), num_modules, (unsigned long)next_write, (unsigned long)sizeof(PCTableShmHeader));
-        fclose(dbg);
+    if (debug_logging_enabled()) {
+        FILE* dbg = fopen("/tmp/shm_debug.log", "a");
+        if (dbg) {
+            fprintf(dbg, "[read_pc_table_from_shm] pid=%d, num_modules=%lu, next_write=%lu, header_size=%lu\n",
+                    getpid(), num_modules, (unsigned long)next_write, (unsigned long)sizeof(PCTableShmHeader));
+            fclose(dbg);
+        }
     }
 
     if (num_modules == 0) {
@@ -1578,15 +1579,16 @@ static void write_pc_table_to_shm(const char* module_name,
     // =========================================================================
     pc_table_spinlock_release(header);
 
-    // Debug to file (outside lock for better concurrency)
-    FILE* dbg = fopen("/tmp/shm_debug.log", "a");
-    if (dbg) {
-        fprintf(dbg, "[write_pc_table_to_shm] pid=%d, module=%s, pc_count=%zu, module_base=0x%lx, is_pie=%d, first_pc=0x%lx, wrote at offset=%lu, slot=%lu\n",
-                getpid(), safe_module_name, pc_count,
-                (unsigned long)module_base, is_pie_or_shared ? 1 : 0,
-                pc_count > 0 ? (unsigned long)entries[0].pc : 0,
-                (unsigned long)write_offset, (unsigned long)slot);
-        fclose(dbg);
+    if (debug_logging_enabled()) {
+        FILE* dbg = fopen("/tmp/shm_debug.log", "a");
+        if (dbg) {
+            fprintf(dbg, "[write_pc_table_to_shm] pid=%d, module=%s, pc_count=%zu, module_base=0x%lx, is_pie=%d, first_pc=0x%lx, wrote at offset=%lu, slot=%lu\n",
+                    getpid(), safe_module_name, pc_count,
+                    (unsigned long)module_base, is_pie_or_shared ? 1 : 0,
+                    pc_count > 0 ? (unsigned long)entries[0].pc : 0,
+                    (unsigned long)write_offset, (unsigned long)slot);
+            fclose(dbg);
+        }
     }
 
     // Unmap

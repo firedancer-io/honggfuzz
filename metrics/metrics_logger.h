@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <atomic>
+#include <tuple>
 #include "jsonl_writer.h"
 
 #ifdef SOLFUZZ_CLICKHOUSE_ENABLED
@@ -286,7 +287,8 @@ protected:
     // Internal ClickHouseDB helpers
     static int64_t now_epoch_ms_(); // ms since UNIX time epoch for DateTime64(3)
     void create_client_and_tables_(); // Called once from init() on main thread
-    void ensure_client_();  // For reconnection only - does NOT create tables
+    void ensure_client_();           // For reconnection only - does NOT create tables
+    void ensure_client_unlocked_();  // Same, but caller must hold m_client_mutex
     void ensure_tables_();  // Called only from create_client_and_tables_()
     void reconnect_if_needed_();
     bool insert_with_retry_(const std::string& table_name, void* block_ptr, const std::string& operation_desc);

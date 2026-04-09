@@ -51,7 +51,7 @@ RAPIDJSON_DIR ?= third_party/rapidjson
 CLICKHOUSE_CPP_DIR ?= third_party/clickhouse-cpp
 METRICS_CXXFLAGS := -std=c++23 -fPIC -fno-omit-frame-pointer -O2 -g -I. -DSOLFUZZ_SHARED_LIB=1
 
-ifdef SOLFUZZ_METRICS_ENABLED
+ifeq ($(SOLFUZZ_METRICS_ENABLED),1)
     METRICS_SRCS := metrics/hfuzz_metrics_bridge.cxx \
                     metrics/metrics_logger.cxx \
                     metrics/jsonl_writer.cxx \
@@ -64,7 +64,7 @@ ifdef SOLFUZZ_METRICS_ENABLED
         METRICS_CXXFLAGS += -I$(RAPIDJSON_DIR)/include
     endif
 
-    ifdef SOLFUZZ_CLICKHOUSE_ENABLED
+    ifeq ($(SOLFUZZ_CLICKHOUSE_ENABLED),1)
         METRICS_CXXFLAGS += -DSOLFUZZ_CLICKHOUSE_ENABLED=1
         ifdef CLICKHOUSE_CPP_DIR
             METRICS_CXXFLAGS += -I$(CLICKHOUSE_CPP_DIR)

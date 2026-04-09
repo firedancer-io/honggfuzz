@@ -979,9 +979,7 @@ void MetricsLogger::log_session_start()
         dbg.flush();  // Ensure message is written to disk immediately
     }
     
-#ifdef SOLFUZZ_CLICKHOUSE_ENABLED
     log_session_event("start", "", 0, 0, 0, 0.0, 0, 0);
-#endif
 }
 
 void MetricsLogger::log_session_end(
@@ -1028,10 +1026,10 @@ void MetricsLogger::log_session_end(
     if (ch_.enabled) {
         ensure_connection();
     }
-    
-    log_session_event("end", status, total_executions, total_crashes, total_hangs, 
-                      cpu_hours, memory_peak_mb, corpus_size);
 #endif
+
+    log_session_event("end", status, total_executions, total_crashes, total_hangs,
+                      cpu_hours, memory_peak_mb, corpus_size);
 }
 
 void MetricsLogger::log_session_event(
@@ -1704,13 +1702,11 @@ void MetricsLogger::log_coverage_events_batch(
         c_harness_name->Append(harness_name_);
         c_fuzz_target->Append(fuzz_target_);
         // Build target_names array
-        uint64_t names_offset_before = nested_target_names->Size();
         for (const auto& s : target_names_) {
             nested_target_names->Append(s);
         }
         offsets_target_names->Append(nested_target_names->Size());
         // Build target_paths array
-        uint64_t paths_offset_before = nested_target_paths->Size();
         for (const auto& s : target_paths_) {
             nested_target_paths->Append(s);
         }

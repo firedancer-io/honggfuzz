@@ -1578,7 +1578,7 @@ void MetricsLogger::log_coverage_event(
     // Table-specific columns
     APPEND_DATETIME64_COLUMN(b, "event_time", now_epoch_ms_(), 3);
     APPEND_STRING_COLUMN(b, "component", component);
-    APPEND_STRING_COLUMN(b, "file_path", file_path);
+    APPEND_STRING_COLUMN(b, "file_path", normalize_path(file_path));
     APPEND_STRING_COLUMN(b, "function_name", function_name);
     APPEND_UINT32_COLUMN(b, "start_line", start_line);
     APPEND_UINT32_COLUMN(b, "end_line", end_line);
@@ -1987,11 +1987,11 @@ void MetricsLogger::log_guard_first_hits(const std::vector<GuardFirstHitEntry>& 
     auto nested_target_names = std::make_shared<clickhouse::ColumnString>();
     auto offsets_target_names = std::make_shared<clickhouse::ColumnUInt64>();
     auto c_target_names = std::make_shared<clickhouse::ColumnArray>(
-        std::make_shared<clickhouse::ColumnString>(), offsets_target_names);
+        nested_target_names, offsets_target_names);
     auto nested_target_paths = std::make_shared<clickhouse::ColumnString>();
     auto offsets_target_paths = std::make_shared<clickhouse::ColumnUInt64>();
     auto c_target_paths = std::make_shared<clickhouse::ColumnArray>(
-        std::make_shared<clickhouse::ColumnString>(), offsets_target_paths);
+        nested_target_paths, offsets_target_paths);
     auto c_program_id = std::make_shared<clickhouse::ColumnString>();
     auto c_syscall_name = std::make_shared<clickhouse::ColumnString>();
     auto c_user_name = std::make_shared<clickhouse::ColumnString>();

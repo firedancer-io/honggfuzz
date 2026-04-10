@@ -795,13 +795,13 @@ bool CoverageSymbolizer::get_pc_location(uintptr_t pc, PcLocation &loc) {
 bool CoverageSymbolizer::get_pc_location_for_module(const std::string& module_path,
                                                      uintptr_t rel_pc,
                                                      PcLocation& loc) {
-  // Use a composite key: hash of (module_path, rel_pc)
-  // For simplicity, we use rel_pc as key but this could collide across modules
-  // For now, check if it's already cached
-  auto it = pc_loc_cache_.find(rel_pc);
-  if (it != pc_loc_cache_.end()) {
-    loc = it->second;
-    return true;
+  auto mod_it = module_pc_loc_cache_.find(module_path);
+  if (mod_it != module_pc_loc_cache_.end()) {
+    auto it = mod_it->second.find(rel_pc);
+    if (it != mod_it->second.end()) {
+      loc = it->second;
+      return true;
+    }
   }
   return false;
 }
@@ -839,11 +839,13 @@ void CoverageSymbolizer::batch_resolve_for_module(
     // Continue with original path - might still work
   }
   
-  // Filter out already-resolved PCs
+  // Filter out already-resolved PCs (check per-module cache)
+  auto& mod_sym = module_symbol_cache_[abs_module_path];
+  auto& mod_loc = module_pc_loc_cache_[abs_module_path];
   std::vector<std::pair<uintptr_t, uintptr_t>> to_resolve;
   for (const auto& p : rel_pcs_and_flags) {
     uintptr_t rel_pc = p.first;
-    if (symbol_cache_.find(rel_pc) == symbol_cache_.end()) {
+    if (mod_sym.find(rel_pc) == mod_sym.end()) {
       to_resolve.push_back(p);
     }
   }
@@ -908,27 +910,27 @@ void CoverageSymbolizer::batch_resolve_for_module(
         const auto& F0 = Inl.getFrame(0);
         std::string func0 = demangle_rust_like(trim_copy(to_str(F0.FunctionName)));
         if (!func0.empty()) {
-          symbol_cache_[rel_pc] = func0 + " (" + abs_module_path + ")";
+          mod_sym[rel_pc] = func0 + " (" + abs_module_path + ")";
           success_count++;
         } else {
           std::stringstream ss;
           ss << "0x" << std::hex << rel_pc;
-          symbol_cache_[rel_pc] = ss.str();
+          mod_sym[rel_pc] = ss.str();
           fail_count++;
         }
-        pc_loc_cache_[rel_pc] = std::move(loc);
+        mod_loc[rel_pc] = std::move(loc);
       } else {
         // No frames - use hex address
         std::stringstream ss;
         ss << "0x" << std::hex << rel_pc;
-        symbol_cache_[rel_pc] = ss.str();
+        mod_sym[rel_pc] = ss.str();
         fail_count++;
       }
     } else {
       llvm::consumeError(ResInl.takeError());
       std::stringstream ss;
       ss << "0x" << std::hex << rel_pc;
-      symbol_cache_[rel_pc] = ss.str();
+      mod_sym[rel_pc] = ss.str();
       fail_count++;
     }
   }
@@ -968,7 +970,7 @@ void CoverageSymbolizer::batch_resolve_for_module(
       for (size_t i = processed; i < batch_end; i++) {
         std::stringstream ss;
         ss << "0x" << std::hex << to_resolve[i].first;
-        symbol_cache_[to_resolve[i].first] = ss.str();
+        mod_sym[to_resolve[i].first] = ss.str();
       }
       processed = batch_end;
       continue;
@@ -991,7 +993,7 @@ void CoverageSymbolizer::batch_resolve_for_module(
       for (size_t i = processed; i < batch_end; i++) {
         std::stringstream ss;
         ss << "0x" << std::hex << to_resolve[i].first;
-        symbol_cache_[to_resolve[i].first] = ss.str();
+        mod_sym[to_resolve[i].first] = ss.str();
       }
       processed = batch_end;
       continue;
@@ -1040,8 +1042,8 @@ void CoverageSymbolizer::batch_resolve_for_module(
       }
       
       loc.frames.push_back(fl);
-      pc_loc_cache_[rel_pc] = loc;
-      symbol_cache_[rel_pc] = func_name + " (" + abs_module_path + ")";
+      mod_loc[rel_pc] = loc;
+      mod_sym[rel_pc] = func_name + " (" + abs_module_path + ")";
       
       idx++;
     }
@@ -1070,7 +1072,7 @@ void CoverageSymbolizer::batch_resolve_for_module(
       uintptr_t rel_pc = to_resolve[idx].first;
       std::stringstream ss;
       ss << "0x" << std::hex << rel_pc;
-      symbol_cache_[rel_pc] = ss.str();
+      mod_sym[rel_pc] = ss.str();
     }
     
     processed = batch_end;

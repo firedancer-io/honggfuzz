@@ -529,7 +529,7 @@ static void symbolize_guards(const std::vector<uint64_t>& guards) {
         for (const auto& gp : guard_pc_pairs) {
             uintptr_t rel_pc = gp.second;
             sol_compat::PcLocation loc;
-            if (!symbolizer.get_pc_location(rel_pc, loc)) {
+            if (!symbolizer.get_pc_location_for_module(module_path, rel_pc, loc)) {
                 pcs_to_resolve.push_back({rel_pc, 0});  // flags=0 for now
             }
         }
@@ -571,7 +571,7 @@ static void symbolize_guards(const std::vector<uint64_t>& guards) {
 
                 // Get location info from symbolizer (keyed by relative PC)
                 sol_compat::PcLocation loc;
-                if (symbolizer.get_pc_location(rel_pc, loc) && !loc.frames.empty()) {
+                if (symbolizer.get_pc_location_for_module(module_path, rel_pc, loc) && !loc.frames.empty()) {
                     const auto& frame = loc.frames[0];  // Use outermost frame
                     sym.file_path = frame.file;
                     sym.function_name = frame.func;

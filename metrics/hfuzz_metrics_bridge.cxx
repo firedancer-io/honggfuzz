@@ -1893,6 +1893,8 @@ void hfuzz_metrics_bridge_log_stats(
     /* COVERAGE METRICS */
     uint64_t coverage_pcs,
     uint64_t coverage_edges,
+    uint64_t coverage_cmp,
+    uint64_t coverage_edge_bucket,
     /* SCHED-STATS */
     uint64_t sched_total,
     float repeat_pct,
@@ -1947,7 +1949,7 @@ void hfuzz_metrics_bridge_log_stats(
         auto& logger = sol_compat::MetricsLogger::instance();
         logger.log_fuzzer_stats(
             total_executions,
-            coverage_pcs, coverage_edges, 0 /* coverage_cmp */, 0 /* coverage_edge_bucket */,
+            coverage_pcs, coverage_edges, coverage_cmp, coverage_edge_bucket,
             sched_total, repeat_pct, high_pct, low_pct, phase2_pct, avg_energy, avg_iters, max_iters, energy_min, energy_max,
             novelty_decay, fresh_boost, stale_penalty, diminishing, depth_penalty, corpus_count, global_avg_energy,
             exec_avg_us, exec_max_us, slow_execs, mut_hit_rate_pct, plateau_secs, queue_wraps, max_depth,

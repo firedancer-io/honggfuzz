@@ -217,10 +217,6 @@ static bool read_pc_table_from_shm() {
     size_t modules_loaded = 0;
     size_t total_pcs = 0;
 
-    // Collect per-module PCs for batch symbolization
-    // Map: module_path -> vector of (relative_pc, flags)
-    std::unordered_map<std::string, std::vector<std::pair<uintptr_t, uintptr_t>>> module_pcs;
-
     // Hold modules mutex while reading and populating
     {
         std::lock_guard<std::mutex> lock(s_modules_mutex);
@@ -284,17 +280,11 @@ static bool read_pc_table_from_shm() {
             if (data_ptr + entries_size > end_ptr) break;
 
             PCTableShmEntry* entries = reinterpret_cast<PCTableShmEntry*>(data_ptr);
-            auto& pcs_for_module = module_pcs[module_name];
             for (uint64_t i = 0; i < pc_count; i++) {
                 PCEntry entry;
                 entry.pc = entries[i].pc;  // Already relative offset
                 entry.flags = entries[i].flags;
                 target_module->pc_table.push_back(entry);
-
-                // Collect for symbolization
-                if (entry.pc != 0) {
-                    pcs_for_module.push_back({entry.pc, entry.flags});
-                }
             }
 
             // Move past PC entries
@@ -1347,7 +1337,7 @@ void hfuzz_metrics_bridge_register_module(const char* module_name,
  * Spinlock helpers for module registration (matches honggfuzz pattern).
  * Uses simple test-and-set spinlock with timeout for safety.
  */
-static inline void pc_table_spinlock_acquire(PCTableShmHeader* header) {
+static inline bool pc_table_spinlock_acquire(PCTableShmHeader* header) {
     const uint64_t MAX_SPINS = 100000000ULL;  // ~10s at 10M spins/s
     uint64_t spins = 0;
 
@@ -1364,7 +1354,7 @@ static inline void pc_table_spinlock_acquire(PCTableShmHeader* header) {
 
             if (++spins > MAX_SPINS) {
                 fprintf(stderr, "[write_pc_table_to_shm] Spinlock timeout after ~10s\n");
-                return;  // Give up rather than deadlock
+                return false;
             }
         }
 
@@ -1372,7 +1362,7 @@ static inline void pc_table_spinlock_acquire(PCTableShmHeader* header) {
         uint32_t expected = 0;
         if (__atomic_compare_exchange_n(&header->registration_lock, &expected, 1,
                                         false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
-            return;  // Successfully acquired
+            return true;
         }
         // Someone else got it, retry
     }
@@ -1480,7 +1470,10 @@ static void write_pc_table_to_shm(const char* module_name,
     // =========================================================================
     // STEP 2: Not found - acquire spinlock
     // =========================================================================
-    pc_table_spinlock_acquire(header);
+    if (!pc_table_spinlock_acquire(header)) {
+        munmap(shm_ptr, PC_TABLE_SHM_SIZE);
+        return;
+    }
 
     // =========================================================================
     // STEP 3: Double-check under lock (another process might have registered while we waited)

@@ -73,6 +73,8 @@ public:
         // COVERAGE METRICS (for complete timeseries data)
         uint64_t coverage_pcs,
         uint64_t coverage_edges,
+        uint64_t coverage_cmp,
+        uint64_t coverage_edge_bucket,
         // SCHED-STATS
         uint64_t sched_total,
         float repeat_pct,
@@ -109,7 +111,21 @@ public:
         uint64_t explore_selects,
         uint64_t secs_since_crash,
         uint64_t stagnation_secs,
-        uint64_t corpus_growth);
+        uint64_t corpus_growth,
+        const std::string& fuzzer_state = "unknown",
+        uint64_t dry_run_tested = 0,
+        uint64_t dry_run_total = 0,
+        // INPUT-HEALTH
+        uint64_t inputs_truncated_too_large = 0);
+
+    // Log memory health metrics for timeseries monitoring
+    void log_memory_stats(
+        int64_t children_rss_mb,
+        int64_t host_available_mb,
+        int64_t cgroup_current_mb,
+        int64_t cgroup_max_mb,
+        uint64_t rss_killed_cnt,
+        uint64_t rlimit_rss_mb);
 
     // Log mutation health metrics (proto/LPM/ELF counters)
     void log_mutation_health(

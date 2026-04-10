@@ -1095,6 +1095,8 @@ void MetricsLogger::log_fuzzer_stats(
     uint64_t total_executions,
     uint64_t coverage_pcs,
     uint64_t coverage_edges,
+    uint64_t coverage_cmp,
+    uint64_t coverage_edge_bucket,
     uint64_t sched_total,
     float repeat_pct,
     float high_pct,
@@ -1127,7 +1129,11 @@ void MetricsLogger::log_fuzzer_stats(
     uint64_t explore_selects,
     uint64_t secs_since_crash,
     uint64_t stagnation_secs,
-    uint64_t corpus_growth)
+    uint64_t corpus_growth,
+    const std::string& fuzzer_state,
+    uint64_t dry_run_tested,
+    uint64_t dry_run_total,
+    uint64_t inputs_truncated_too_large)
 {
     if (vector_enabled_.load()) {
         static const bool s_exec_events_enabled = [] {
@@ -1138,9 +1144,9 @@ void MetricsLogger::log_fuzzer_stats(
             JsonBuilder jb;
             add_common_fields_(jb);
             jb.add_timestamp("event_time", now_epoch_ms());
-            jb.add("fuzzer_state", std::string(""));
-            jb.add("dry_run_tested", static_cast<uint32_t>(0));
-            jb.add("dry_run_total", static_cast<uint32_t>(0));
+            jb.add("fuzzer_state", fuzzer_state);
+            jb.add("dry_run_tested", static_cast<uint32_t>(dry_run_tested));
+            jb.add("dry_run_total", static_cast<uint32_t>(dry_run_total));
             jb.add("total_executions", total_executions);
             jb.add("total_crashes", total_crashes);
             jb.add("total_hangs", static_cast<uint32_t>(0));
@@ -1149,8 +1155,8 @@ void MetricsLogger::log_fuzzer_stats(
             jb.add("num_coverage_lines", static_cast<uint32_t>(coverage_pcs));
             jb.add("num_coverage_branches", static_cast<uint32_t>(coverage_edges));
             jb.add("num_coverage_functions", static_cast<uint32_t>(0));
-            jb.add("coverage_cmp", static_cast<uint64_t>(0));
-            jb.add("coverage_edge_bucket", static_cast<uint64_t>(0));
+            jb.add("coverage_cmp", coverage_cmp);
+            jb.add("coverage_edge_bucket", coverage_edge_bucket);
             jb.add("corpus_size", corpus_count);
             jb.add("corpus_diversity_score", 0.0f);
             jb.add("total_mutations_executed", sched_total);
@@ -1193,7 +1199,7 @@ void MetricsLogger::log_fuzzer_stats(
             jb.add("secs_since_crash", secs_since_crash);
             jb.add("stagnation_secs", stagnation_secs);
             jb.add("corpus_growth", corpus_growth);
-            jb.add("inputs_truncated_too_large", static_cast<uint64_t>(0));
+            jb.add("inputs_truncated_too_large", inputs_truncated_too_large);
             emit_jsonl_("execution_events", jb);
         }
     }
@@ -1265,7 +1271,7 @@ void MetricsLogger::log_fuzzer_stats(
 
     enqueue_insert_("execution_events", &b, "fuzzer_stats");
 #else
-    (void)total_executions; (void)coverage_pcs; (void)coverage_edges;
+    (void)total_executions; (void)coverage_pcs; (void)coverage_edges; (void)coverage_cmp; (void)coverage_edge_bucket;
     (void)sched_total; (void)repeat_pct; (void)high_pct; (void)low_pct; (void)phase2_pct;
     (void)avg_energy; (void)avg_iters; (void)max_iters; (void)energy_min; (void)energy_max;
     (void)novelty_decay; (void)fresh_boost; (void)stale_penalty; (void)diminishing; (void)depth_penalty;
@@ -1273,6 +1279,7 @@ void MetricsLogger::log_fuzzer_stats(
     (void)slow_execs; (void)mut_hit_rate_pct; (void)plateau_secs; (void)queue_wraps; (void)max_depth;
     (void)unique_crashes; (void)total_crashes; (void)timeouts; (void)fertile_boosts;
     (void)saturated; (void)explore_selects; (void)secs_since_crash; (void)stagnation_secs; (void)corpus_growth;
+    (void)fuzzer_state; (void)dry_run_tested; (void)dry_run_total; (void)inputs_truncated_too_large;
 #endif
 }
 
@@ -1401,6 +1408,34 @@ void MetricsLogger::log_mutation_health(
         jb.add("elf_fixup_ok_cnt", elf_fixup_ok_cnt);
         jb.add("exec_fail_cnt", exec_fail_cnt);
         jb.add("verify_cnt", verify_cnt);
+        emit_jsonl_("execution_events", jb);
+    }
+}
+
+void MetricsLogger::log_memory_stats(
+    int64_t children_rss_mb,
+    int64_t host_available_mb,
+    int64_t cgroup_current_mb,
+    int64_t cgroup_max_mb,
+    uint64_t rss_killed_cnt,
+    uint64_t rlimit_rss_mb)
+{
+    static const bool s_exec_events_enabled = [] {
+        const char* v = std::getenv("SOLFUZZ_EXECUTION_EVENTS_ENABLE");
+        return v && std::string(v) == "1";
+    }();
+    if (!s_exec_events_enabled) return;
+
+    if (vector_enabled_.load()) {
+        JsonBuilder jb;
+        add_common_fields_(jb);
+        jb.add_timestamp("event_time", now_epoch_ms());
+        jb.add("children_rss_mb", static_cast<int>(children_rss_mb));
+        jb.add("host_available_mb", static_cast<int>(host_available_mb));
+        jb.add("cgroup_current_mb", static_cast<int>(cgroup_current_mb));
+        jb.add("cgroup_max_mb", static_cast<int>(cgroup_max_mb));
+        jb.add("rss_killed_cnt", rss_killed_cnt);
+        jb.add("rlimit_rss_mb", rlimit_rss_mb);
         emit_jsonl_("execution_events", jb);
     }
 }

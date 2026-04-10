@@ -50,7 +50,7 @@ public:
         int millis = static_cast<int>(epoch_ms % 1000);
         struct tm tm_buf;
         gmtime_r(&secs, &tm_buf);
-        char tmp[32];
+        char tmp[80];
         snprintf(tmp, sizeof(tmp), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
                  tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
                  tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec, millis);

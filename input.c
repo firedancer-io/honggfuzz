@@ -504,8 +504,8 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
     {
         honggfuzz_t* hfuzz = run->global;  /* Cache global pointer */
         struct timespec lock_start;
-        clock_gettime(CLOCK_MONOTONIC, &lock_start);
         MX_SCOPED_RWLOCK_WRITE(&hfuzz->mutex.dynfileq);
+        clock_gettime(CLOCK_MONOTONIC, &lock_start);
 
         /*
          * Two-phase selection to avoid spinning when all inputs have low energy:

@@ -1820,29 +1820,19 @@ static void mangle_ProtoMutate(run_t* run, bool printable) {
             return;
         }
 
-        uint8_t* t1 = util_Malloc(len1);
+        size_t   span_start = f1->tag_off;
+        size_t   mid_start  = f1->tag_off + len1;
+        size_t   mid_len    = f2->tag_off - mid_start;
+        size_t   span_len   = (f2->tag_off + len2) - span_start;
+        uint8_t* tmp        = util_Malloc(span_len);
         defer {
-            free(t1);
-        };
-        uint8_t* t2 = util_Malloc(len2);
-        defer {
-            free(t2);
+            free(tmp);
         };
 
-        memcpy(t1, &run->dynfile->data[f1->tag_off], len1);
-        memcpy(t2, &run->dynfile->data[f2->tag_off], len2);
-
-        if (len1 == len2) {
-            memcpy(&run->dynfile->data[f1->tag_off], t2, len2);
-            memcpy(&run->dynfile->data[f2->tag_off], t1, len1);
-        } else {
-            size_t mid_start = f1->tag_off + len1;
-            size_t mid_len   = f2->tag_off - mid_start;
-            memmove(
-                &run->dynfile->data[f1->tag_off + len2], &run->dynfile->data[mid_start], mid_len);
-            memcpy(&run->dynfile->data[f1->tag_off], t2, len2);
-            memcpy(&run->dynfile->data[f1->tag_off + len2 + mid_len], t1, len1);
-        }
+        memcpy(tmp, &run->dynfile->data[span_start], span_len);
+        memcpy(&run->dynfile->data[span_start], &tmp[f2->tag_off - span_start], len2);
+        memcpy(&run->dynfile->data[span_start + len2], &tmp[len1], mid_len);
+        memcpy(&run->dynfile->data[span_start + len2 + mid_len], tmp, len1);
         break;
     }
 
@@ -1872,6 +1862,9 @@ static void mangle_ProtoMutate(run_t* run, bool printable) {
         size_t ml  = HF_MIN(util_rndGet(1, 4), run->dynfile->size - mo);
         for (size_t j = 0; j < ml; j++) {
             run->dynfile->data[mo + j] ^= (uint8_t)(1u << util_rndGet(0, 7));
+        }
+        if (printable) {
+            util_turnToPrintable(&run->dynfile->data[mo], ml);
         }
         break;
     }

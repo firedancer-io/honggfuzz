@@ -1988,6 +1988,7 @@ void hfuzz_metrics_bridge_log_mutation_health(
         logger.log_mutation_health(
             proto_parse_calls, proto_parse_successes,
             custom_mutator_calls, custom_mutator_successes,
+            proto_parse_pct,
             proto_round_cnt, proto_scan_ok_cnt, total_round_cnt,
             lpm_mutate_cnt, lpm_crossover_cnt, lpm_parse_fail_cnt,
             postprocessor_cnt, elf_fixup_ok_cnt,

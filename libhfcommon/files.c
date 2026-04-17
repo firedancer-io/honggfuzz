@@ -426,7 +426,13 @@ int files_createSharedMem(size_t sz, const char* name, bool exportmap) {
         const char* tmpdir = getenv("TMPDIR");
         if (!tmpdir) tmpdir = "/tmp";
         char template[PATH_MAX];
-        snprintf(template, sizeof(template), "%s/%s.XXXXXX", tmpdir, name);
+        int  template_len =
+            snprintf(template, sizeof(template), "%s/%s.XXXXXX", tmpdir, name);
+        if (template_len < 0 || (size_t)template_len >= sizeof(template)) {
+            LOG_W("Temporary file template doesn't fit in buffer: TMPDIR='%s', name='%s'",
+                tmpdir, name);
+            return -1;
+        }
         if ((fd = mkostemp(template, O_CLOEXEC)) == -1) {
             PLOG_W("mkstemp('%s')", template);
             return -1;

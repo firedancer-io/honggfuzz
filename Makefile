@@ -56,7 +56,8 @@ ifeq ($(SOLFUZZ_METRICS_ENABLED),1)
                     metrics/metrics_logger.cxx \
                     metrics/jsonl_writer.cxx \
                     metrics/fuzzing_session.cxx \
-                    metrics/coverage_symbolizer.cxx
+                    metrics/coverage_symbolizer.cxx \
+                    metrics/fuzzer_corpus_collector.cxx
     METRICS_OBJS := $(METRICS_SRCS:.cxx=.o)
 
     ifdef RAPIDJSON_DIR

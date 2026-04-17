@@ -1432,30 +1432,28 @@ bool instrumentConstAvail(void) {
 }
 
 /*
- * Mutation health counter accessors for HF_ITER-based fuzzers (e.g. Rust
- * cargo-hfuzz binaries) that bypass HonggfuzzPersistentLoop / HonggfuzzRunOneInput.
+ * Mutation health counter accessors for fuzzers that bypass the usual
+ * persistent-loop input execution path.
  *
- * These write to the same globalCovFeedback shared memory slots that
- * persistent.c:150-170 writes for LLVMFuzzerTestOneInput-based harnesses.
- * The honggfuzz parent sums per-thread slots and passes them to
- * hfuzz_metrics_log_mutation_health() (input.c:998-1022).
+ * These helpers update per-thread counters stored in the shared
+ * globalCovFeedback structure so the supervising process can aggregate them.
  */
 void instrumentReportProtoParseCall(void) {
-    globalCovFeedback->pidProtoParseCallsCnt[my_thread_no].val++;
+    ATOMIC_POST_INC(globalCovFeedback->pidProtoParseCallsCnt[my_thread_no].val);
 }
 
 void instrumentReportProtoParseSuccess(void) {
-    globalCovFeedback->pidProtoParseSuccessesCnt[my_thread_no].val++;
+    ATOMIC_POST_INC(globalCovFeedback->pidProtoParseSuccessesCnt[my_thread_no].val);
 }
 
 void instrumentReportExecFail(void) {
-    globalCovFeedback->pidExecFailCnt[my_thread_no].val++;
+    ATOMIC_POST_INC(globalCovFeedback->pidExecFailCnt[my_thread_no].val);
 }
 
 void instrumentReportVerify(void) {
-    globalCovFeedback->pidVerifyCnt[my_thread_no].val++;
+    ATOMIC_POST_INC(globalCovFeedback->pidVerifyCnt[my_thread_no].val);
 }
 
 void instrumentReportElfFixupOk(void) {
-    globalCovFeedback->pidElfFixupOkCnt[my_thread_no].val++;
+    ATOMIC_POST_INC(globalCovFeedback->pidElfFixupOkCnt[my_thread_no].val);
 }

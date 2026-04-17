@@ -909,7 +909,11 @@ static void mangle_Resize(run_t* run, bool printable) {
     switch (choice) {
     case 0: { /* Set new size arbitrarily */
         size_t lo = run->global->io.minFileSz > 0 ? run->global->io.minFileSz : 1;
-        newsz = (ssize_t)util_rndGet(lo, run->global->mutate.maxInputSz);
+        size_t hi = run->global->mutate.maxInputSz;
+        if (lo > hi) {
+            lo = hi;
+        }
+        newsz = (ssize_t)util_rndGet(lo, hi);
     }
         break;
     case 1 ... 4: /* Increase size by a small value */

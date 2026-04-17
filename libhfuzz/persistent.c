@@ -96,8 +96,10 @@ __attribute__((weak)) int LLVMFuzzerTestOneInput(
 /*
  * Weak reference to LLVMFuzzerCustomMutator.
  *
- * All solfuzz harnesses provide this (via DEFINE_BINARY_PROTO_FUZZER or a
- * hand-written custom mutator).  We check at startup and abort if missing.
+ * Solfuzz harnesses are expected to provide this (via
+ * DEFINE_BINARY_PROTO_FUZZER or a hand-written custom mutator). If it is
+ * missing, startup warns and mutation falls back to generic byte-level
+ * mutation instead of aborting.
  */
 __attribute__((weak)) size_t LLVMFuzzerCustomMutator(
     uint8_t* data, size_t size, size_t max_size, unsigned int seed);
@@ -148,25 +150,40 @@ static void              HonggfuzzRunOneInput(const uint8_t* buf, size_t len) {
     instrumentCheckStackDepth();
 
     if (solfuzz_proto_test_one_input_calls) {
-        globalCovFeedback->pidProtoParseCallsCnt[my_thread_no].val =
-            solfuzz_proto_test_one_input_calls();
-        globalCovFeedback->pidProtoParseSuccessesCnt[my_thread_no].val =
-            solfuzz_proto_test_one_input_runs();
+        ATOMIC_SET(globalCovFeedback->pidProtoParseCallsCnt[my_thread_no].val,
+            solfuzz_proto_test_one_input_calls());
+    }
+    if (solfuzz_proto_test_one_input_runs) {
+        ATOMIC_SET(globalCovFeedback->pidProtoParseSuccessesCnt[my_thread_no].val,
+            solfuzz_proto_test_one_input_runs());
     }
     if (solfuzz_lpm_mutate_calls) {
-        globalCovFeedback->pidLpmMutateCnt[my_thread_no].val = solfuzz_lpm_mutate_calls();
-        globalCovFeedback->pidLpmCrossOverCnt[my_thread_no].val = solfuzz_lpm_crossover_calls();
-        globalCovFeedback->pidLpmParseFailCnt[my_thread_no].val = solfuzz_lpm_parse_fail_calls();
+        ATOMIC_SET(globalCovFeedback->pidLpmMutateCnt[my_thread_no].val,
+            solfuzz_lpm_mutate_calls());
+    }
+    if (solfuzz_lpm_crossover_calls) {
+        ATOMIC_SET(globalCovFeedback->pidLpmCrossOverCnt[my_thread_no].val,
+            solfuzz_lpm_crossover_calls());
+    }
+    if (solfuzz_lpm_parse_fail_calls) {
+        ATOMIC_SET(globalCovFeedback->pidLpmParseFailCnt[my_thread_no].val,
+            solfuzz_lpm_parse_fail_calls());
     }
     if (solfuzz_postprocessor_calls) {
-        globalCovFeedback->pidPostProcessorCnt[my_thread_no].val = solfuzz_postprocessor_calls();
+        ATOMIC_SET(globalCovFeedback->pidPostProcessorCnt[my_thread_no].val,
+            solfuzz_postprocessor_calls());
     }
     if (solfuzz_elf_fixup_ok_calls) {
-        globalCovFeedback->pidElfFixupOkCnt[my_thread_no].val = solfuzz_elf_fixup_ok_calls();
+        ATOMIC_SET(globalCovFeedback->pidElfFixupOkCnt[my_thread_no].val,
+            solfuzz_elf_fixup_ok_calls());
     }
     if (solfuzz_exec_fail_calls) {
-        globalCovFeedback->pidExecFailCnt[my_thread_no].val = solfuzz_exec_fail_calls();
-        globalCovFeedback->pidVerifyCnt[my_thread_no].val = solfuzz_verify_calls();
+        ATOMIC_SET(globalCovFeedback->pidExecFailCnt[my_thread_no].val,
+            solfuzz_exec_fail_calls());
+    }
+    if (solfuzz_verify_calls) {
+        ATOMIC_SET(globalCovFeedback->pidVerifyCnt[my_thread_no].val,
+            solfuzz_verify_calls());
     }
 }
 
@@ -227,15 +244,15 @@ static void HonggfuzzPersistentLoop(void) {
             size_t copy_len = len;
             if (copy_len > _HF_INPUT_MAX_SIZE) {
                 copy_len = _HF_INPUT_MAX_SIZE;
-                globalCovFeedback->pidInputsTruncatedCnt[my_thread_no].val++;
+                ATOMIC_PRE_INC(globalCovFeedback->pidInputsTruncatedCnt[my_thread_no].val);
             }
             memcpy(hf_mut_buf, buf, copy_len);
             hf_mut_counter += 0x9e3779b9u;
-            globalCovFeedback->pidCustomMutatorCallsCnt[my_thread_no].val++;
+            ATOMIC_PRE_INC(globalCovFeedback->pidCustomMutatorCallsCnt[my_thread_no].val);
             len = LLVMFuzzerCustomMutator(
                 hf_mut_buf, copy_len, _HF_INPUT_MAX_SIZE, hf_mut_counter);
             if (len > 0)
-                globalCovFeedback->pidCustomMutatorSuccessesCnt[my_thread_no].val++;
+                ATOMIC_PRE_INC(globalCovFeedback->pidCustomMutatorSuccessesCnt[my_thread_no].val);
             buf = hf_mut_buf;
         }
 

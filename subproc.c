@@ -275,6 +275,9 @@ static bool subproc_PrepareExecv(run_t* run) {
     char fuzzNo[128];
     snprintf(fuzzNo, sizeof(fuzzNo), "%" PRId32, run->fuzzNo);
     setenv(_HF_THREAD_NO_ENV, fuzzNo, 1);
+    if (!run->global->exe.useCustomMutator) {
+        setenv("HFUZZ_USE_CUSTOM_MUTATOR", "0", 1);
+    }
     if (run->global->exe.netDriver) {
         setenv(_HF_THREAD_NETDRIVER_ENV, "1", 1);
     }
@@ -544,20 +547,20 @@ void subproc_checkTimeLimit(run_t* run) {
         ATOMIC_POST_INC(run->global->cnts.timeoutedCnt);
 
         /* Log hang metrics (optional - weak symbol, no-op if not overridden) */
-        hfuzz_metrics_log_hang(run->dynfile->size, 
+        hfuzz_metrics_log_hang(run->dynfile->size,
                                 (uint64_t)(run->global->timing.tmOut * 1000));
 
         /* Save the timeout input as a bug artifact */
         if (run->dynfile && run->dynfile->data && run->dynfile->size > 0) {
             char timeoutFileName[PATH_MAX];
             uint64_t inputHash = util_hash((const char*)run->dynfile->data, run->dynfile->size);
-            
+
             /* Use unique filename: TIMEOUT.SIZE.HASH.fuzz */
             snprintf(timeoutFileName, sizeof(timeoutFileName),
                 "%s/TIMEOUT.%zu.%" PRIx64 ".%s",
                 run->global->io.crashDir, run->dynfile->size, inputHash,
                 run->global->io.fileExtn);
-            
+
             /* Only save if file doesn't already exist (deduplication by hash) */
             if (!files_exists(timeoutFileName)) {
                 /* Use atomic write to ensure file appears fully formed */

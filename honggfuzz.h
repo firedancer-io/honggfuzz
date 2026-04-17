@@ -414,6 +414,7 @@ typedef struct {
         size_t forkFailures;              /* Fork syscall failures */
         size_t persistentResets;          /* Persistent mode resets */
         size_t fileIOErrors;              /* File read/write failures */
+        size_t inputsTruncatedTooLarge;    /* Inputs truncated because they exceeded maxFileSz */
     } cnts;
     struct {
         bool enabled;

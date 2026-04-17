@@ -516,6 +516,12 @@ void subproc_checkTimeLimit(run_t* run) {
     if (!run->global->timing.tmOut) {
         return;
     }
+    /* During dry run we replay known corpus files under heavy load (all CPUs).
+     * Killing them on timeout wastes coverage and pollutes timeout counters.
+     * subproc_checkTermination still handles SIGINT/shutdown. */
+    if (ATOMIC_GET(run->global->feedback.state) == _HF_STATE_DYNAMIC_DRY_RUN) {
+        return;
+    }
 
     int64_t curUSecs  = util_timeNowUSecs();
     int64_t diffUSecs = curUSecs - run->timeStartedUSecs;
@@ -544,20 +550,20 @@ void subproc_checkTimeLimit(run_t* run) {
         ATOMIC_POST_INC(run->global->cnts.timeoutedCnt);
 
         /* Log hang metrics (optional - weak symbol, no-op if not overridden) */
-        hfuzz_metrics_log_hang(run->dynfile->size, 
+        hfuzz_metrics_log_hang(run->dynfile->size,
                                 (uint64_t)(run->global->timing.tmOut * 1000));
 
         /* Save the timeout input as a bug artifact */
         if (run->dynfile && run->dynfile->data && run->dynfile->size > 0) {
             char timeoutFileName[PATH_MAX];
             uint64_t inputHash = util_hash((const char*)run->dynfile->data, run->dynfile->size);
-            
+
             /* Use unique filename: TIMEOUT.SIZE.HASH.fuzz */
             snprintf(timeoutFileName, sizeof(timeoutFileName),
                 "%s/TIMEOUT.%zu.%" PRIx64 ".%s",
                 run->global->io.crashDir, run->dynfile->size, inputHash,
                 run->global->io.fileExtn);
-            
+
             /* Only save if file doesn't already exist (deduplication by hash) */
             if (!files_exists(timeoutFileName)) {
                 /* Use atomic write to ensure file appears fully formed */

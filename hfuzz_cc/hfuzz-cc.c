@@ -332,8 +332,13 @@ static bool getLibPath(
 
     /* If not, create it with atomic rename() */
     char template[PATH_MAX];
-    snprintf(template, sizeof(template), "%s/lib.honggfuzz.a.XXXXXX", tmpdir);
-    int  fd = TEMP_FAILURE_RETRY(mkostemp(template, O_CLOEXEC));
+    int  template_len =
+        snprintf(template, sizeof(template), "%s/lib.honggfuzz.a.XXXXXX", tmpdir);
+    if (template_len < 0 || (size_t)template_len >= sizeof(template)) {
+        LOG_E("Temporary file template doesn't fit in buffer for TMPDIR='%s'", tmpdir);
+        return false;
+    }
+    int fd = TEMP_FAILURE_RETRY(mkostemp(template, O_CLOEXEC));
     if (fd == -1) {
         PLOG_E("mkostemp('%s')", template);
         return false;

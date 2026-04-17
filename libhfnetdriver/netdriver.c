@@ -243,10 +243,19 @@ __attribute__((weak)) int HonggfuzzNetDriverArgsForServer(
  */
 __attribute__((weak)) int HonggfuzzNetDriverTempdir(char* str, size_t size) {
     const char* tmpdir = getenv("TMPDIR");
+    int         ret;
+
     if (tmpdir) {
-        return snprintf(str, size, "%s/HFND_TMP_DIR", tmpdir);
+        ret = snprintf(str, size, "%s/HFND_TMP_DIR", tmpdir);
+    } else {
+        ret = snprintf(str, size, "%s", HFND_TMP_DIR);
     }
-    return snprintf(str, size, "%s", HFND_TMP_DIR);
+
+    if (ret < 0 || (size_t)ret >= size) {
+        return -1;
+    }
+
+    return ret;
 }
 
 /* Put a custom sockaddr here (e.g. based on AF_UNIX), sety *type and *protocol as per man 2 socket

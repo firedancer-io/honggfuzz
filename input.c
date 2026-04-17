@@ -55,14 +55,20 @@ void input_setSize(run_t* run, size_t sz) {
     if (sz > run->global->mutate.maxInputSz) {
         PLOG_F("Too large size requested: %zu > maxSize: %zu", sz, run->global->mutate.maxInputSz);
     }
-    /* Never ftruncate the memfd -- the mmap is already maxInputSz and all
-     * access is bounded by dynfile->size.  ftruncate down then up decommits
+    /* In persistent mode, skip ftruncate: the mmap is already maxInputSz and
+     * all access is bounded by dynfile->size.  ftruncate down then up decommits
      * tmpfs pages and on re-growth the page-fault handler can fail to
      * re-allocate the shmem page, causing SIGBUS (BUS_ADRERR) in the parent.
      *
-     * Without ftruncate, pages touched by previous mutations stay resident.
-     * Worst case is maxInputSz per thread (10 MB × 40 = 400 MB with current
-     * Octane config).  CygWin and macOS already skipped the ftruncate. */
+     * In non-persistent mode, the child reads the fd until EOF, so the backing
+     * size must match dynfile->size to avoid exposing stale trailing bytes. */
+#if !defined(__CYGWIN__) && !defined(_HF_ARCH_DARWIN)
+    if (!run->global->exe.persistent) {
+        if (TEMP_FAILURE_RETRY(ftruncate(run->dynfile->fd, sz)) == -1) {
+            PLOG_W("ftruncate(run->dynfile->fd=%d, sz=%zu)", run->dynfile->fd, sz);
+        }
+    }
+#endif
     run->dynfile->size = sz;
 }
 

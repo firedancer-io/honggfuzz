@@ -389,7 +389,7 @@ void display_display(honggfuzz_t* hfuzz) {
     size_t truncatedTooLarge = ATOMIC_GET(hfuzz->cnts.inputsTruncatedTooLarge);
     if (hfuzz->feedback.covFeedbackMap) {
         for (size_t i = 0; i < hfuzz->threads.threadsMax; i++) {
-            truncatedTooLarge += hfuzz->feedback.covFeedbackMap->pidInputsTruncatedCnt[i].val;
+            truncatedTooLarge += ATOMIC_GET(hfuzz->feedback.covFeedbackMap->pidInputsTruncatedCnt[i].val);
         }
     }
     if (truncatedTooLarge > 0) {

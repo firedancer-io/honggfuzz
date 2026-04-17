@@ -458,9 +458,11 @@ static bool fuzz_fetchInput(run_t* run) {
     {
         static time_t lastStatsTime = 0;
         time_t now = time(NULL);
-        if (now - lastStatsTime >= 150
-            && fuzz_getState(run->global) != _HF_STATE_DYNAMIC_MAIN) {
-            lastStatsTime = now;
+        time_t last = __atomic_load_n(&lastStatsTime, __ATOMIC_SEQ_CST);
+        if (now - last >= 150
+            && fuzz_getState(run->global) != _HF_STATE_DYNAMIC_MAIN
+            && __atomic_compare_exchange_n(
+                &lastStatsTime, &last, now, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
             honggfuzz_t* hfuzz = run->global;
             uint64_t execs = ATOMIC_GET(hfuzz->cnts.mutationsCnt);
             uint64_t pcs   = ATOMIC_GET(hfuzz->feedback.hwCnts.softCntPc);
@@ -502,6 +504,11 @@ static bool fuzz_fetchInput(run_t* run) {
 
             if (execs > 0) {
                 uint64_t truncatedTooLarge = ATOMIC_GET(hfuzz->cnts.inputsTruncatedTooLarge);
+                if (hfuzz->feedback.covFeedbackMap) {
+                    for (size_t i = 0; i < hfuzz->threads.threadsMax; i++) {
+                        truncatedTooLarge += ATOMIC_GET(hfuzz->feedback.covFeedbackMap->pidInputsTruncatedCnt[i].val);
+                    }
+                }
                 hfuzz_metrics_log_stats(
                     execs, pcs, edges, 0, 0,
                     /* sched (not available outside dynamic mode) */

@@ -1914,14 +1914,19 @@ void hfuzz_metrics_bridge_log_stats(
     uint64_t explore_selects,
     uint64_t secs_since_crash,
     uint64_t stagnation_secs,
-    uint64_t corpus_growth
+    uint64_t corpus_growth,
+    const char* fuzzer_state,
+    uint64_t dry_run_tested,
+    uint64_t dry_run_total,
+    uint64_t inputs_truncated_too_large
 ) {
     if (!s_session_initialized.load()) {
         return;
     }
 
     std::cerr << "[hfuzz_metrics_bridge] Stats update - "
-              << "total_execs: " << total_executions
+              << "state: " << (fuzzer_state ? fuzzer_state : "unknown")
+              << ", total_execs: " << total_executions
               << ", exec_avg_us: " << exec_avg_us
               << ", sched: " << sched_total
               << ", repeat: " << repeat_pct << "%"
@@ -1939,7 +1944,9 @@ void hfuzz_metrics_bridge_log_stats(
             sched_total, repeat_pct, high_pct, low_pct, phase2_pct, avg_energy, avg_iters, max_iters, energy_min, energy_max,
             novelty_decay, fresh_boost, stale_penalty, diminishing, depth_penalty, corpus_count, global_avg_energy,
             exec_avg_us, exec_max_us, slow_execs, mut_hit_rate_pct, plateau_secs, queue_wraps, max_depth,
-            unique_crashes, total_crashes, timeouts, fertile_boosts, saturated, explore_selects, secs_since_crash, stagnation_secs, corpus_growth
+            unique_crashes, total_crashes, timeouts, fertile_boosts, saturated, explore_selects, secs_since_crash, stagnation_secs, corpus_growth,
+            fuzzer_state ? fuzzer_state : "unknown", dry_run_tested, dry_run_total,
+            inputs_truncated_too_large
         );
     } catch (const std::exception& e) {
         std::cerr << "[hfuzz_metrics_bridge] Error logging stats: "

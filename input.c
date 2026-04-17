@@ -838,18 +838,18 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                         uint64_t postProc = 0, elfFixupOk = 0, execFail = 0, verifyCalls = 0;
                         if (cov) {
                             for (size_t t = 0; t < hfuzz->threads.threadsMax; t++) {
-                                ppCalls += cov->pidProtoParseCallsCnt[t].val;
-                                ppSucc  += cov->pidProtoParseSuccessesCnt[t].val;
-                                cmCalls += cov->pidCustomMutatorCallsCnt[t].val;
-                                cmSucc  += cov->pidCustomMutatorSuccessesCnt[t].val;
-                                childTruncated += cov->pidInputsTruncatedCnt[t].val;
-                                lpmMutate    += cov->pidLpmMutateCnt[t].val;
-                                lpmCrossOver += cov->pidLpmCrossOverCnt[t].val;
-                                lpmParseFail += cov->pidLpmParseFailCnt[t].val;
-                                postProc     += cov->pidPostProcessorCnt[t].val;
-                                elfFixupOk   += cov->pidElfFixupOkCnt[t].val;
-                                execFail     += cov->pidExecFailCnt[t].val;
-                                verifyCalls  += cov->pidVerifyCnt[t].val;
+                                ppCalls += ATOMIC_GET(cov->pidProtoParseCallsCnt[t].val);
+                                ppSucc  += ATOMIC_GET(cov->pidProtoParseSuccessesCnt[t].val);
+                                cmCalls += ATOMIC_GET(cov->pidCustomMutatorCallsCnt[t].val);
+                                cmSucc  += ATOMIC_GET(cov->pidCustomMutatorSuccessesCnt[t].val);
+                                childTruncated += ATOMIC_GET(cov->pidInputsTruncatedCnt[t].val);
+                                lpmMutate    += ATOMIC_GET(cov->pidLpmMutateCnt[t].val);
+                                lpmCrossOver += ATOMIC_GET(cov->pidLpmCrossOverCnt[t].val);
+                                lpmParseFail += ATOMIC_GET(cov->pidLpmParseFailCnt[t].val);
+                                postProc     += ATOMIC_GET(cov->pidPostProcessorCnt[t].val);
+                                elfFixupOk   += ATOMIC_GET(cov->pidElfFixupOkCnt[t].val);
+                                execFail     += ATOMIC_GET(cov->pidExecFailCnt[t].val);
+                                verifyCalls  += ATOMIC_GET(cov->pidVerifyCnt[t].val);
                             }
                         }
                         float parseRate = ppCalls > 0 ? ((float)ppSucc / (float)ppCalls * 100.0f) : 0.0f;
@@ -1001,17 +1001,17 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
             uint64_t lpmMut = 0, lpmXover = 0, lpmFail = 0;
             uint64_t postProc = 0, elfOk = 0, execFail = 0, verify = 0;
             for (size_t t = 0; t < run->global->threads.threadsMax; t++) {
-                ppCalls  += cov->pidProtoParseCallsCnt[t].val;
-                ppSucc   += cov->pidProtoParseSuccessesCnt[t].val;
-                cmCalls  += cov->pidCustomMutatorCallsCnt[t].val;
-                cmSucc   += cov->pidCustomMutatorSuccessesCnt[t].val;
-                lpmMut   += cov->pidLpmMutateCnt[t].val;
-                lpmXover += cov->pidLpmCrossOverCnt[t].val;
-                lpmFail  += cov->pidLpmParseFailCnt[t].val;
-                postProc += cov->pidPostProcessorCnt[t].val;
-                elfOk    += cov->pidElfFixupOkCnt[t].val;
-                execFail += cov->pidExecFailCnt[t].val;
-                verify   += cov->pidVerifyCnt[t].val;
+                ppCalls  += ATOMIC_GET(cov->pidProtoParseCallsCnt[t].val);
+                ppSucc   += ATOMIC_GET(cov->pidProtoParseSuccessesCnt[t].val);
+                cmCalls  += ATOMIC_GET(cov->pidCustomMutatorCallsCnt[t].val);
+                cmSucc   += ATOMIC_GET(cov->pidCustomMutatorSuccessesCnt[t].val);
+                lpmMut   += ATOMIC_GET(cov->pidLpmMutateCnt[t].val);
+                lpmXover += ATOMIC_GET(cov->pidLpmCrossOverCnt[t].val);
+                lpmFail  += ATOMIC_GET(cov->pidLpmParseFailCnt[t].val);
+                postProc += ATOMIC_GET(cov->pidPostProcessorCnt[t].val);
+                elfOk    += ATOMIC_GET(cov->pidElfFixupOkCnt[t].val);
+                execFail += ATOMIC_GET(cov->pidExecFailCnt[t].val);
+                verify   += ATOMIC_GET(cov->pidVerifyCnt[t].val);
             }
             if (ppCalls > 0 || cmCalls > 0) {
                 uint64_t protoRounds = ATOMIC_GET(run->global->mutate.protoRoundCnt);

@@ -1535,7 +1535,7 @@ void MetricsLogger::log_mutation_health(
                 std::string col = "kind_";
                 col += (kind_names[k] ? kind_names[k] : "unknown");
                 col += "_cnt";
-                jb.add(col, kind_counts[k]);
+                jb.add(col.c_str(), kind_counts[k]);
             }
             jb.add("elf_fixup_ok_cnt", elf_fixup_ok_cnt);
             jb.add("exec_fail_cnt", exec_fail_cnt);

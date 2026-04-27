@@ -255,6 +255,7 @@ typedef struct {
 #define _HF_KUTATOR_KIND_MAX   32
 #define _HF_KUTATOR_NAME_MAX  32
     _Atomic uint32_t kutatorKindNum;
+    _Atomic uint8_t  kutatorKindNameReady[_HF_KUTATOR_KIND_MAX];
     char           kutatorKindNames[_HF_KUTATOR_KIND_MAX][_HF_KUTATOR_NAME_MAX];
     cntCacheLine_t pidKutatorKind[_HF_KUTATOR_KIND_MAX][_HF_THREAD_MAX];
     cntCacheLine_t pidElfFixupOkCnt[_HF_THREAD_MAX];

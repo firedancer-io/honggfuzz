@@ -193,11 +193,18 @@ static void              HonggfuzzRunOneInput(const uint8_t* buf, size_t len) {
         for (uint32_t i = 0; i < n; i++) {
             ATOMIC_SET(globalCovFeedback->pidKutatorKind[i][my_thread_no].val,
                 solfuzz_kutator_kind_count(i));
-            if (solfuzz_kutator_kind_name && globalCovFeedback->kutatorKindNames[i][0] == '\0') {
-                const char* name = solfuzz_kutator_kind_name(i);
-                if (name) {
-                    snprintf(globalCovFeedback->kutatorKindNames[i],
-                             _HF_KUTATOR_NAME_MAX, "%s", name);
+            if (solfuzz_kutator_kind_name &&
+                !atomic_load_explicit(&globalCovFeedback->kutatorKindNameReady[i], memory_order_acquire)) {
+                uint8_t expected = 0;
+                if (atomic_compare_exchange_strong_explicit(
+                        &globalCovFeedback->kutatorKindNameReady[i],
+                        &expected, 1, memory_order_acq_rel, memory_order_acquire)) {
+                    const char* name = solfuzz_kutator_kind_name(i);
+                    if (name) {
+                        snprintf(globalCovFeedback->kutatorKindNames[i],
+                                 _HF_KUTATOR_NAME_MAX, "%s", name);
+                    }
+                    atomic_store_explicit(&globalCovFeedback->kutatorKindNameReady[i], 2, memory_order_release);
                 }
             }
         }

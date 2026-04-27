@@ -878,8 +878,10 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                             int ret = snprintf(kindsBuf, sizeof(kindsBuf), "kinds{");
                             if (ret > 0 && (size_t)ret < sizeof(kindsBuf)) pos = ret;
                             for (uint32_t k = 0; k < kindNum && pos < (int)sizeof(kindsBuf) - 32; k++) {
-                                const char* name = cov ? cov->kutatorKindNames[k] : "?";
-                                if (name[0] == '\0') name = "?";
+                                const char* name = "?";
+                                if (cov && atomic_load_explicit(&cov->kutatorKindNameReady[k], memory_order_acquire) == 2) {
+                                    name = cov->kutatorKindNames[k];
+                                }
                                 ret = snprintf(kindsBuf + pos, sizeof(kindsBuf) - (size_t)pos,
                                     "%s%s=%zu", k > 0 ? " " : "", name, (size_t)kindCounts[k]);
                                 if (ret < 0 || (size_t)ret >= sizeof(kindsBuf) - (size_t)pos) break;
@@ -1065,7 +1067,8 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                 uint64_t totalRounds = ATOMIC_GET(run->global->mutate.totalRoundCnt);
                 const char* kindNames2[_HF_KUTATOR_KIND_MAX];
                 for (uint32_t k = 0; k < kindNum2; k++) {
-                    kindNames2[k] = cov->kutatorKindNames[k];
+                    kindNames2[k] = atomic_load_explicit(&cov->kutatorKindNameReady[k], memory_order_acquire) == 2
+                        ? cov->kutatorKindNames[k] : "unknown";
                 }
                 hfuzz_metrics_log_mutation_health(s->mutationsCnt,
                                                   ppCalls, ppSucc, cmCalls, cmSucc,

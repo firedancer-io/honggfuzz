@@ -1256,8 +1256,8 @@ void MetricsLogger::log_fuzzer_stats(
             add_common_fields_(jb);
             jb.add_timestamp("event_time", now_epoch_ms());
             jb.add("fuzzer_state", fuzzer_state);
-            jb.add("dry_run_tested", static_cast<uint32_t>(dry_run_tested));
-            jb.add("dry_run_total", static_cast<uint32_t>(dry_run_total));
+            jb.add("dry_run_tested", dry_run_tested);
+            jb.add("dry_run_total", dry_run_total);
             jb.add("total_executions", total_executions);
             jb.add("total_crashes", total_crashes);
             jb.add("total_hangs", static_cast<uint64_t>(0));
@@ -1723,7 +1723,7 @@ void MetricsLogger::log_mutation_health(
         for (const auto& s : names_vec) ptrs.push_back(s.c_str());
         ensure_kind_columns_(ptrs.data(), static_cast<uint32_t>(ptrs.size()));
 
-        insert_with_retry_("execution_events", const_cast<clickhouse::Block*>(block.get()), "mutation_health");
+        insert_with_retry_("execution_events", block.get(), "mutation_health");
     }, "mutation_health");
 #else
     (void)total_executions; (void)proto_parse_calls; (void)proto_parse_successes;

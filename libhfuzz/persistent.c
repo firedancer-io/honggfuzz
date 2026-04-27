@@ -189,7 +189,7 @@ static void              HonggfuzzRunOneInput(const uint8_t* buf, size_t len) {
     if (solfuzz_kutator_kind_num && solfuzz_kutator_kind_count) {
         uint32_t n = solfuzz_kutator_kind_num();
         if (n > _HF_KUTATOR_KIND_MAX) n = _HF_KUTATOR_KIND_MAX;
-        globalCovFeedback->kutatorKindNum = n;
+        atomic_store_explicit(&globalCovFeedback->kutatorKindNum, n, memory_order_release);
         for (uint32_t i = 0; i < n; i++) {
             ATOMIC_SET(globalCovFeedback->pidKutatorKind[i][my_thread_no].val,
                 solfuzz_kutator_kind_count(i));

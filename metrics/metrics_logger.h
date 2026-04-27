@@ -281,7 +281,7 @@ protected:
     std::string task_type_;
 
     // execs_delta tracking (previous total_executions for delta computation)
-    uint64_t prev_total_executions_ = 0;
+    std::atomic<uint64_t> prev_total_executions_{0};
 
     // Shutdown status
     std::atomic<bool> m_shutting_down{false};

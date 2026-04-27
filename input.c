@@ -846,7 +846,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                         uint64_t kindCounts[_HF_KUTATOR_KIND_MAX] = {0};
                         uint64_t elfFixupOk = 0, execFail = 0, verifyCalls = 0;
                         if (cov) {
-                            kindNum = cov->kutatorKindNum;
+                            kindNum = atomic_load_explicit(&cov->kutatorKindNum, memory_order_acquire);
                             if (kindNum > _HF_KUTATOR_KIND_MAX) kindNum = _HF_KUTATOR_KIND_MAX;
                             for (size_t t = 0; t < hfuzz->threads.threadsMax; t++) {
                                 ppCalls += ATOMIC_GET(cov->pidProtoParseCallsCnt[t].val);
@@ -875,14 +875,19 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                         char kindsBuf[512] = {0};
                         {
                             int pos = 0;
-                            pos += snprintf(kindsBuf + pos, sizeof(kindsBuf) - pos, "kinds{");
+                            int ret = snprintf(kindsBuf, sizeof(kindsBuf), "kinds{");
+                            if (ret > 0 && (size_t)ret < sizeof(kindsBuf)) pos = ret;
                             for (uint32_t k = 0; k < kindNum && pos < (int)sizeof(kindsBuf) - 32; k++) {
                                 const char* name = cov ? cov->kutatorKindNames[k] : "?";
                                 if (name[0] == '\0') name = "?";
-                                pos += snprintf(kindsBuf + pos, sizeof(kindsBuf) - pos,
+                                ret = snprintf(kindsBuf + pos, sizeof(kindsBuf) - (size_t)pos,
                                     "%s%s=%zu", k > 0 ? " " : "", name, (size_t)kindCounts[k]);
+                                if (ret < 0 || (size_t)ret >= sizeof(kindsBuf) - (size_t)pos) break;
+                                pos += ret;
                             }
-                            snprintf(kindsBuf + pos, sizeof(kindsBuf) - pos, "}");
+                            if (pos < (int)sizeof(kindsBuf) - 1) {
+                                snprintf(kindsBuf + pos, sizeof(kindsBuf) - (size_t)pos, "}");
+                            }
                         }
                         LOG_I("[MUTATION-HEALTH] proto_parse=%zu/%zu (%.1f%%) custom_mutator=%zu/%zu"
                               " proto_rounds=%zu/%zu scan_ok=%zu"
@@ -1032,7 +1037,7 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
             uint64_t ppCalls = 0, ppSucc = 0, cmCalls = 0, cmSucc = 0;
             uint64_t kutMut = 0, kutXover = 0, kutParseOk = 0, kutFail = 0;
             uint64_t encOvf = 0, noCand = 0;
-            uint32_t kindNum2 = cov->kutatorKindNum;
+            uint32_t kindNum2 = atomic_load_explicit(&cov->kutatorKindNum, memory_order_acquire);
             if (kindNum2 > _HF_KUTATOR_KIND_MAX) kindNum2 = _HF_KUTATOR_KIND_MAX;
             uint64_t kindCounts2[_HF_KUTATOR_KIND_MAX] = {0};
             uint64_t elfOk = 0, execFail = 0, verify = 0;

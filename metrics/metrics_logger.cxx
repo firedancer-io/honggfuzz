@@ -605,8 +605,8 @@ static const std::vector<TableSchema> get_table_schemas() {
             {
                 {"session_id", "String"},
                 {"event_time", "DateTime64(3)"},
-                {"total_executions", "UInt32"},
-                {"total_crashes", "UInt32"},
+                {"total_executions", "UInt64"},
+                {"total_crashes", "UInt64"},
                 {"total_hangs", "UInt32"},
                 {"cpu_usage_pct", "Float32"},
                 {"memory_usage_mb", "UInt64"},
@@ -619,6 +619,9 @@ static const std::vector<TableSchema> get_table_schemas() {
                 {"total_mutations_successful", "UInt64"},
                 {"mutation_success_rate", "Float32"},
                 {"new_features_discovered", "UInt64"},
+                {"coverage_cmp", "UInt64"},
+                {"coverage_edge_bucket", "UInt64"},
+                {"execs_delta", "UInt64"},
             },
             "toYYYYMM(event_time)",
             {"event_time", "session_id"}
@@ -868,9 +871,16 @@ void MetricsLogger::ensure_kind_columns_(const char* const* kind_names, uint32_t
     if (!client_) return;
 
     for (uint32_t k = 0; k < kind_num; k++) {
-        std::string col = "kind_";
-        col += (kind_names[k] ? kind_names[k] : "unknown");
-        col += "_cnt";
+        const char* raw = kind_names[k] ? kind_names[k] : "unknown";
+        std::string safe;
+        for (const char* p = raw; *p; p++) {
+            if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+                (*p >= '0' && *p <= '9') || *p == '_') {
+                safe += *p;
+            }
+        }
+        if (safe.empty()) safe = "unknown";
+        std::string col = "kind_" + safe + "_cnt";
 
         if (ensured_kind_columns_.count(col)) continue;
 
@@ -1160,9 +1170,8 @@ void MetricsLogger::log_fuzzer_stats(
     uint64_t dry_run_total,
     uint64_t inputs_truncated_too_large)
 {
-    uint64_t delta = (total_executions >= prev_total_executions_)
-        ? total_executions - prev_total_executions_ : 0;
-    prev_total_executions_ = total_executions;
+    uint64_t prev = prev_total_executions_.exchange(total_executions);
+    uint64_t delta = (total_executions >= prev) ? total_executions - prev : 0;
 
     if (vector_enabled_.load()) {
         static const bool s_exec_events_enabled = [] {
@@ -1525,6 +1534,7 @@ void MetricsLogger::log_mutation_health(
             jb.add("proto_round_cnt", proto_round_cnt);
             jb.add("proto_scan_ok_cnt", proto_scan_ok_cnt);
             jb.add("total_round_cnt", total_round_cnt);
+            // Column names use "lpm_" prefix for backward-compatible schema
             jb.add("lpm_mutate_cnt", kutator_mutate_cnt);
             jb.add("lpm_crossover_cnt", kutator_crossover_cnt);
             jb.add("lpm_parse_success_cnt", kutator_parse_success_cnt);

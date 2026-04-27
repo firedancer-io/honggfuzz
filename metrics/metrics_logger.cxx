@@ -837,11 +837,11 @@ static std::string generate_create_table_ddl(const TableSchema& schema) {
 // Helper: Get existing column names from ClickHouse table
 static std::set<std::string> get_existing_columns(clickhouse::Client& client, const std::string& database, const std::string& table_name) {
     std::set<std::string> columns;
-    
+
     try {
-        std::string query = "SELECT name FROM system.columns WHERE database = '" + database 
+        std::string query = "SELECT name FROM system.columns WHERE database = '" + database
                           + "' AND table = '" + table_name + "'";
-        
+
         client.Select(query, [&columns](const clickhouse::Block& block) {
             if (block.GetColumnCount() > 0) {
                 auto col_ptr = block[0];
@@ -855,10 +855,10 @@ static std::set<std::string> get_existing_columns(clickhouse::Client& client, co
             }
         });
     } catch (const std::exception& e) {
-        std::cerr << "[MetricsLogger] WARNING: Failed to query existing columns for table '" 
+        std::cerr << "[MetricsLogger] WARNING: Failed to query existing columns for table '"
                   << table_name << "': " << e.what() << std::endl;
     }
-    
+
     return columns;
 }
 
@@ -884,7 +884,7 @@ void MetricsLogger::ensure_tables_() {
             
             // Step 2: Check existing columns and compare with desired schema
             std::set<std::string> existing_cols = get_existing_columns(client_->c(), ch_.database, schema.name);
-            
+
             if (!existing_cols.empty() && !schema.columns.empty()) {
                 // Find missing columns (columns in desired but not in existing)
                 std::vector<std::pair<std::string, std::string>> missing_cols;
@@ -893,36 +893,52 @@ void MetricsLogger::ensure_tables_() {
                         missing_cols.push_back(desired);
                     }
                 }
-                
+
                 // Add missing columns if any
                 if (!missing_cols.empty()) {
-                    std::cerr << "[MetricsLogger] Table '" << schema.name 
+                    std::cerr << "[MetricsLogger] Table '" << schema.name
                               << "' is missing " << missing_cols.size() << " column(s), adding them..." << std::endl;
-                    
+
                     for (const auto& col : missing_cols) {
                         try {
-                            std::string alter_sql = "ALTER TABLE " + schema.name 
+                            std::string alter_sql = "ALTER TABLE " + schema.name
                                                   + " ADD COLUMN IF NOT EXISTS " + col.first + " " + col.second;
-                            
-                            std::cerr << "[MetricsLogger] Adding column '" << col.first 
+
+                            std::cerr << "[MetricsLogger] Adding column '" << col.first
                                       << "' with type '" << col.second << "'..." << std::endl;
                             client_->c().Execute(alter_sql);
                             std::cerr << "[MetricsLogger] Successfully added column '" << col.first << "'" << std::endl;
                         } catch (const std::exception& e) {
-                            std::cerr << "[MetricsLogger] WARNING: Failed to add column '" << col.first 
+                            std::cerr << "[MetricsLogger] WARNING: Failed to add column '" << col.first
                                       << "' to table '" << schema.name << "': " << e.what() << std::endl;
                         }
                     }
                 } else {
-                    std::cerr << "[MetricsLogger] Table '" << schema.name 
-                              << "' schema is up-to-date (existing: " << existing_cols.size() 
+                    std::cerr << "[MetricsLogger] Table '" << schema.name
+                              << "' schema is up-to-date (existing: " << existing_cols.size()
                               << " columns, desired: " << schema.columns.size() << " columns)" << std::endl;
-                    
+
                     // Log if existing table has more columns than desired (which is OK)
                     if (existing_cols.size() > schema.columns.size()) {
-                        std::cerr << "[MetricsLogger] Note: Existing table has " 
-                                  << (existing_cols.size() - schema.columns.size()) 
+                        std::cerr << "[MetricsLogger] Note: Existing table has "
+                                  << (existing_cols.size() - schema.columns.size())
                                   << " additional column(s), which is acceptable (superset)" << std::endl;
+                    }
+                }
+            }
+
+            // Promote columns that were originally UInt32 to UInt64
+            if (schema.name == "execution_events" || schema.name == "session_events") {
+                const char* promote_cols[] = {"total_executions", "total_crashes", "total_hangs"};
+                for (const auto& col_name : promote_cols) {
+                    if (existing_cols.count(col_name)) {
+                        try {
+                            std::string sql = "ALTER TABLE " + schema.name
+                                            + " MODIFY COLUMN " + col_name + " UInt64";
+                            client_->c().Execute(sql);
+                        } catch (const std::exception&) {
+                            // Already UInt64 or unsupported — harmless
+                        }
                     }
                 }
             }

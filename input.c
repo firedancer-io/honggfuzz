@@ -840,8 +840,14 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                     {
                         feedback_t* cov = hfuzz->feedback.covFeedbackMap;
                         uint64_t ppCalls = 0, ppSucc = 0, cmCalls = 0, cmSucc = 0;
-                        uint64_t lpmMutate = 0, lpmCrossOver = 0, lpmParseFail = 0;
-                        uint64_t postProc = 0, elfFixupOk = 0, execFail = 0, verifyCalls = 0;
+                        uint64_t kutMutate = 0, kutCrossOver = 0, kutParseOk = 0, kutParseFail = 0;
+                        uint64_t encOverflow = 0, noCandidates = 0;
+                        uint64_t kindMutate = 0, kindAdd = 0, kindDelete = 0;
+                        uint64_t kindXoverCopy = 0, kindXoverClone = 0;
+                        uint64_t kindDupInPlace = 0, kindDupAndMut = 0;
+                        uint64_t kindShuffle = 0, kindSpliceSwap = 0;
+                        uint64_t kindInsertAtPos = 0, kindDefaultVal = 0;
+                        uint64_t elfFixupOk = 0, execFail = 0, verifyCalls = 0;
                         if (cov) {
                             for (size_t t = 0; t < hfuzz->threads.threadsMax; t++) {
                                 ppCalls += ATOMIC_GET(cov->pidProtoParseCallsCnt[t].val);
@@ -849,10 +855,23 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                                 cmCalls += ATOMIC_GET(cov->pidCustomMutatorCallsCnt[t].val);
                                 cmSucc  += ATOMIC_GET(cov->pidCustomMutatorSuccessesCnt[t].val);
                                 childTruncated += ATOMIC_GET(cov->pidInputsTruncatedCnt[t].val);
-                                lpmMutate    += ATOMIC_GET(cov->pidLpmMutateCnt[t].val);
-                                lpmCrossOver += ATOMIC_GET(cov->pidLpmCrossOverCnt[t].val);
-                                lpmParseFail += ATOMIC_GET(cov->pidLpmParseFailCnt[t].val);
-                                postProc     += ATOMIC_GET(cov->pidPostProcessorCnt[t].val);
+                                kutMutate    += ATOMIC_GET(cov->pidKutatorMutateCnt[t].val);
+                                kutCrossOver += ATOMIC_GET(cov->pidKutatorCrossOverCnt[t].val);
+                                kutParseOk   += ATOMIC_GET(cov->pidKutatorParseSuccessCnt[t].val);
+                                kutParseFail += ATOMIC_GET(cov->pidKutatorParseFailCnt[t].val);
+                                encOverflow  += ATOMIC_GET(cov->pidKutatorEncodeOverflow[t].val);
+                                noCandidates += ATOMIC_GET(cov->pidKutatorNoCandidates[t].val);
+                                kindMutate   += ATOMIC_GET(cov->pidKutatorKindMutate[t].val);
+                                kindAdd      += ATOMIC_GET(cov->pidKutatorKindAdd[t].val);
+                                kindDelete   += ATOMIC_GET(cov->pidKutatorKindDelete[t].val);
+                                kindXoverCopy  += ATOMIC_GET(cov->pidKutatorKindCrossoverCopy[t].val);
+                                kindXoverClone += ATOMIC_GET(cov->pidKutatorKindCrossoverClone[t].val);
+                                kindDupInPlace += ATOMIC_GET(cov->pidKutatorKindDupInPlace[t].val);
+                                kindDupAndMut  += ATOMIC_GET(cov->pidKutatorKindDupAndMutate[t].val);
+                                kindShuffle    += ATOMIC_GET(cov->pidKutatorKindShuffle[t].val);
+                                kindSpliceSwap += ATOMIC_GET(cov->pidKutatorKindSpliceSwap[t].val);
+                                kindInsertAtPos += ATOMIC_GET(cov->pidKutatorKindInsertAtPos[t].val);
+                                kindDefaultVal  += ATOMIC_GET(cov->pidKutatorKindDefaultValue[t].val);
                                 elfFixupOk   += ATOMIC_GET(cov->pidElfFixupOkCnt[t].val);
                                 execFail     += ATOMIC_GET(cov->pidExecFailCnt[t].val);
                                 verifyCalls  += ATOMIC_GET(cov->pidVerifyCnt[t].val);
@@ -864,13 +883,21 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                         uint64_t totalRounds = ATOMIC_GET(hfuzz->mutate.totalRoundCnt);
                         LOG_I("[MUTATION-HEALTH] proto_parse=%zu/%zu (%.1f%%) custom_mutator=%zu/%zu"
                               " proto_rounds=%zu/%zu scan_ok=%zu"
-                              " lpm_mut=%zu xover=%zu parse_fail=%zu"
-                              " postproc=%zu elf_ok=%zu exec_fail=%zu verify=%zu",
+                              " kutator_mut=%zu xover=%zu parse_ok=%zu parse_fail=%zu"
+                              " enc_overflow=%zu no_candidates=%zu"
+                              " kinds{mut=%zu add=%zu del=%zu xc=%zu xk=%zu dup=%zu dm=%zu sh=%zu ss=%zu ip=%zu dv=%zu}"
+                              " elf_ok=%zu exec_fail=%zu verify=%zu",
                               (size_t)ppSucc, (size_t)ppCalls, (double)parseRate,
                               (size_t)cmSucc, (size_t)cmCalls,
                               (size_t)protoRounds, (size_t)totalRounds, (size_t)protoScanOk,
-                              (size_t)lpmMutate, (size_t)lpmCrossOver, (size_t)lpmParseFail,
-                              (size_t)postProc, (size_t)elfFixupOk, (size_t)execFail, (size_t)verifyCalls);
+                              (size_t)kutMutate, (size_t)kutCrossOver, (size_t)kutParseOk, (size_t)kutParseFail,
+                              (size_t)encOverflow, (size_t)noCandidates,
+                              (size_t)kindMutate, (size_t)kindAdd, (size_t)kindDelete,
+                              (size_t)kindXoverCopy, (size_t)kindXoverClone,
+                              (size_t)kindDupInPlace, (size_t)kindDupAndMut,
+                              (size_t)kindShuffle, (size_t)kindSpliceSwap,
+                              (size_t)kindInsertAtPos, (size_t)kindDefaultVal,
+                              (size_t)elfFixupOk, (size_t)execFail, (size_t)verifyCalls);
                     }
 
                     /* Defer the metrics bridge call until after the rwlock is released.
@@ -1004,17 +1031,33 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
         feedback_t* cov = run->global->feedback.covFeedbackMap;
         if (cov) {
             uint64_t ppCalls = 0, ppSucc = 0, cmCalls = 0, cmSucc = 0;
-            uint64_t lpmMut = 0, lpmXover = 0, lpmFail = 0;
-            uint64_t postProc = 0, elfOk = 0, execFail = 0, verify = 0;
+            uint64_t kutMut = 0, kutXover = 0, kutParseOk = 0, kutFail = 0;
+            uint64_t encOvf = 0, noCand = 0;
+            uint64_t kMut = 0, kAdd = 0, kDel = 0, kXC = 0, kXK = 0;
+            uint64_t kDIP = 0, kDM = 0, kSh = 0, kSS = 0, kIP = 0, kDV = 0;
+            uint64_t elfOk = 0, execFail = 0, verify = 0;
             for (size_t t = 0; t < run->global->threads.threadsMax; t++) {
                 ppCalls  += ATOMIC_GET(cov->pidProtoParseCallsCnt[t].val);
                 ppSucc   += ATOMIC_GET(cov->pidProtoParseSuccessesCnt[t].val);
                 cmCalls  += ATOMIC_GET(cov->pidCustomMutatorCallsCnt[t].val);
                 cmSucc   += ATOMIC_GET(cov->pidCustomMutatorSuccessesCnt[t].val);
-                lpmMut   += ATOMIC_GET(cov->pidLpmMutateCnt[t].val);
-                lpmXover += ATOMIC_GET(cov->pidLpmCrossOverCnt[t].val);
-                lpmFail  += ATOMIC_GET(cov->pidLpmParseFailCnt[t].val);
-                postProc += ATOMIC_GET(cov->pidPostProcessorCnt[t].val);
+                kutMut   += ATOMIC_GET(cov->pidKutatorMutateCnt[t].val);
+                kutXover += ATOMIC_GET(cov->pidKutatorCrossOverCnt[t].val);
+                kutParseOk += ATOMIC_GET(cov->pidKutatorParseSuccessCnt[t].val);
+                kutFail  += ATOMIC_GET(cov->pidKutatorParseFailCnt[t].val);
+                encOvf   += ATOMIC_GET(cov->pidKutatorEncodeOverflow[t].val);
+                noCand   += ATOMIC_GET(cov->pidKutatorNoCandidates[t].val);
+                kMut     += ATOMIC_GET(cov->pidKutatorKindMutate[t].val);
+                kAdd     += ATOMIC_GET(cov->pidKutatorKindAdd[t].val);
+                kDel     += ATOMIC_GET(cov->pidKutatorKindDelete[t].val);
+                kXC      += ATOMIC_GET(cov->pidKutatorKindCrossoverCopy[t].val);
+                kXK      += ATOMIC_GET(cov->pidKutatorKindCrossoverClone[t].val);
+                kDIP     += ATOMIC_GET(cov->pidKutatorKindDupInPlace[t].val);
+                kDM      += ATOMIC_GET(cov->pidKutatorKindDupAndMutate[t].val);
+                kSh      += ATOMIC_GET(cov->pidKutatorKindShuffle[t].val);
+                kSS      += ATOMIC_GET(cov->pidKutatorKindSpliceSwap[t].val);
+                kIP      += ATOMIC_GET(cov->pidKutatorKindInsertAtPos[t].val);
+                kDV      += ATOMIC_GET(cov->pidKutatorKindDefaultValue[t].val);
                 elfOk    += ATOMIC_GET(cov->pidElfFixupOkCnt[t].val);
                 execFail += ATOMIC_GET(cov->pidExecFailCnt[t].val);
                 verify   += ATOMIC_GET(cov->pidVerifyCnt[t].val);
@@ -1023,10 +1066,15 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                 uint64_t protoRounds = ATOMIC_GET(run->global->mutate.protoRoundCnt);
                 uint64_t protoScanOk = ATOMIC_GET(run->global->mutate.protoScanOkCnt);
                 uint64_t totalRounds = ATOMIC_GET(run->global->mutate.totalRoundCnt);
-                hfuzz_metrics_log_mutation_health(ppCalls, ppSucc, cmCalls, cmSucc,
+                hfuzz_metrics_log_mutation_health(s->mutationsCnt,
+                                                  ppCalls, ppSucc, cmCalls, cmSucc,
                                                   protoRounds, protoScanOk, totalRounds,
-                                                  lpmMut, lpmXover, lpmFail,
-                                                  postProc, elfOk, execFail, verify);
+                                                  kutMut, kutXover, kutParseOk, kutFail,
+                                                  encOvf, noCand,
+                                                  kMut, kAdd, kDel,
+                                                  kXC, kXK, kDIP, kDM,
+                                                  kSh, kSS, kIP, kDV,
+                                                  elfOk, execFail, verify);
             }
         }
     }

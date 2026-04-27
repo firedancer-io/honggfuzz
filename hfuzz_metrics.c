@@ -28,8 +28,16 @@ typedef void (*register_module_fn)(const char*, uint64_t, uint64_t);
 typedef void (*register_pc_table_fn)(const char*, const hfuzz_pc_entry_t*, size_t, uint64_t);
 typedef void (*log_full_coverage_fn)(const uint8_t*, uint64_t, const char*);
 typedef void (*register_coverage_feedback_fn)(const uint8_t*, void*);
-typedef void (*log_mutation_health_fn)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
-                                       uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+typedef void (*log_mutation_health_fn)(
+    uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,  /* total_execs, pp_calls, pp_succ, cm_calls, cm_succ */
+    uint64_t, uint64_t, uint64_t,                       /* proto_round, proto_scan, total_round */
+    uint64_t, uint64_t, uint64_t, uint64_t,             /* kutator_mutate, kutator_xover, kutator_parse_ok, kutator_parse_fail */
+    uint64_t, uint64_t,                                 /* encode_overflow, no_candidates */
+    uint64_t, uint64_t, uint64_t,                       /* kind_mutate, kind_add, kind_delete */
+    uint64_t, uint64_t, uint64_t, uint64_t,             /* kind_xover_copy, kind_xover_clone, kind_dup_in_place, kind_dup_and_mutate */
+    uint64_t, uint64_t, uint64_t, uint64_t,             /* kind_shuffle, kind_splice_swap, kind_insert_at_pos, kind_default_value */
+    uint64_t, uint64_t, uint64_t                        /* elf_fixup_ok, exec_fail, verify */
+);
 typedef void (*log_stats_fn)(
     uint64_t, /* total_executions */
     uint64_t, uint64_t, uint64_t, uint64_t, /* coverage_pcs, coverage_edges, coverage_cmp, coverage_edge_bucket */
@@ -247,6 +255,7 @@ void hfuzz_metrics_log_stats(
 }
 
 void hfuzz_metrics_log_mutation_health(
+    uint64_t total_executions,
     uint64_t proto_parse_calls,
     uint64_t proto_parse_successes,
     uint64_t custom_mutator_calls,
@@ -254,21 +263,40 @@ void hfuzz_metrics_log_mutation_health(
     uint64_t proto_round_cnt,
     uint64_t proto_scan_ok_cnt,
     uint64_t total_round_cnt,
-    uint64_t lpm_mutate_cnt,
-    uint64_t lpm_crossover_cnt,
-    uint64_t lpm_parse_fail_cnt,
-    uint64_t postprocessor_cnt,
+    uint64_t kutator_mutate_cnt,
+    uint64_t kutator_crossover_cnt,
+    uint64_t kutator_parse_success_cnt,
+    uint64_t kutator_parse_fail_cnt,
+    uint64_t encode_overflow_cnt,
+    uint64_t no_candidates_cnt,
+    uint64_t kind_mutate_cnt,
+    uint64_t kind_add_cnt,
+    uint64_t kind_delete_cnt,
+    uint64_t kind_crossover_copy_cnt,
+    uint64_t kind_crossover_clone_cnt,
+    uint64_t kind_dup_in_place_cnt,
+    uint64_t kind_dup_and_mutate_cnt,
+    uint64_t kind_shuffle_cnt,
+    uint64_t kind_splice_swap_cnt,
+    uint64_t kind_insert_at_pos_cnt,
+    uint64_t kind_default_value_cnt,
     uint64_t elf_fixup_ok_cnt,
     uint64_t exec_fail_cnt,
     uint64_t verify_cnt
 ) {
     if (fn_log_mutation_health) {
-        fn_log_mutation_health(proto_parse_calls, proto_parse_successes,
+        fn_log_mutation_health(total_executions,
+                               proto_parse_calls, proto_parse_successes,
                                custom_mutator_calls, custom_mutator_successes,
                                proto_round_cnt, proto_scan_ok_cnt, total_round_cnt,
-                               lpm_mutate_cnt, lpm_crossover_cnt, lpm_parse_fail_cnt,
-                               postprocessor_cnt, elf_fixup_ok_cnt,
-                               exec_fail_cnt, verify_cnt);
+                               kutator_mutate_cnt, kutator_crossover_cnt, kutator_parse_success_cnt, kutator_parse_fail_cnt,
+                               encode_overflow_cnt, no_candidates_cnt,
+                               kind_mutate_cnt, kind_add_cnt, kind_delete_cnt,
+                               kind_crossover_copy_cnt, kind_crossover_clone_cnt,
+                               kind_dup_in_place_cnt, kind_dup_and_mutate_cnt,
+                               kind_shuffle_cnt, kind_splice_swap_cnt,
+                               kind_insert_at_pos_cnt, kind_default_value_cnt,
+                               elf_fixup_ok_cnt, exec_fail_cnt, verify_cnt);
     }
 }
 

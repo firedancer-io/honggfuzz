@@ -14,6 +14,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <functional>
+#include <set>
 #endif
 
 namespace sol_compat {
@@ -135,17 +136,9 @@ public:
         uint64_t kutator_parse_fail_cnt,
         uint64_t encode_overflow_cnt,
         uint64_t no_candidates_cnt,
-        uint64_t kind_mutate_cnt,
-        uint64_t kind_add_cnt,
-        uint64_t kind_delete_cnt,
-        uint64_t kind_crossover_copy_cnt,
-        uint64_t kind_crossover_clone_cnt,
-        uint64_t kind_dup_in_place_cnt,
-        uint64_t kind_dup_and_mutate_cnt,
-        uint64_t kind_shuffle_cnt,
-        uint64_t kind_splice_swap_cnt,
-        uint64_t kind_insert_at_pos_cnt,
-        uint64_t kind_default_value_cnt,
+        const uint64_t* kind_counts,
+        const char* const* kind_names,
+        uint32_t kind_num,
         uint64_t elf_fixup_ok_cnt,
         uint64_t exec_fail_cnt,
         uint64_t verify_cnt);
@@ -323,6 +316,8 @@ protected:
     std::unique_ptr<class ClickHouseClient> client_;
     mutable std::mutex m_client_mutex; // Protects client_ access
     std::atomic<bool> m_tables_initialized{false}; // Tables created once on main thread
+    std::set<std::string> ensured_kind_columns_; // Kind columns already ALTER-ed into execution_events
+    void ensure_kind_columns_(const char* const* kind_names, uint32_t kind_num);
 #endif
 };
 

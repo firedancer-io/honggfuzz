@@ -857,8 +857,33 @@ void MetricsLogger::ensure_tables_() {
         }
     }
 
-    std::cerr << "[MetricsLogger] Finished ensuring tables: " << success_count 
+    std::cerr << "[MetricsLogger] Finished ensuring tables: " << success_count
               << " succeeded, " << fail_count << " failed" << std::endl;
+}
+
+void MetricsLogger::ensure_kind_columns_(const char* const* kind_names, uint32_t kind_num) {
+    if (!ch_.enabled || !m_tables_initialized.load()) return;
+
+    std::lock_guard<std::mutex> lock(m_client_mutex);
+    if (!client_) return;
+
+    for (uint32_t k = 0; k < kind_num; k++) {
+        std::string col = "kind_";
+        col += (kind_names[k] ? kind_names[k] : "unknown");
+        col += "_cnt";
+
+        if (ensured_kind_columns_.count(col)) continue;
+
+        try {
+            std::string sql = "ALTER TABLE execution_events ADD COLUMN IF NOT EXISTS "
+                            + col + " UInt64 DEFAULT 0";
+            client_->c().Execute(sql);
+            ensured_kind_columns_.insert(col);
+        } catch (const std::exception& e) {
+            std::cerr << "[MetricsLogger] WARNING: Failed to add kind column '"
+                      << col << "': " << e.what() << std::endl;
+        }
+    }
 }
 #endif
 
@@ -1214,17 +1239,6 @@ void MetricsLogger::log_fuzzer_stats(
             jb.add("lpm_parse_fail_cnt", static_cast<uint64_t>(0));
             jb.add("encode_overflow_cnt", static_cast<uint64_t>(0));
             jb.add("no_candidates_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_mutate_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_add_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_delete_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_crossover_copy_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_crossover_clone_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_dup_in_place_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_dup_and_mutate_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_shuffle_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_splice_swap_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_insert_at_pos_cnt", static_cast<uint64_t>(0));
-            jb.add("kind_default_value_cnt", static_cast<uint64_t>(0));
             jb.add("elf_fixup_ok_cnt", static_cast<uint64_t>(0));
             jb.add("exec_fail_cnt", static_cast<uint64_t>(0));
             jb.add("verify_cnt", static_cast<uint64_t>(0));
@@ -1318,17 +1332,6 @@ void MetricsLogger::log_fuzzer_stats(
     APPEND_UINT64_COLUMN(b, "lpm_parse_fail_cnt", 0);
     APPEND_UINT64_COLUMN(b, "encode_overflow_cnt", 0);
     APPEND_UINT64_COLUMN(b, "no_candidates_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_mutate_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_add_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_delete_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_crossover_copy_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_crossover_clone_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_dup_in_place_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_dup_and_mutate_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_shuffle_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_splice_swap_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_insert_at_pos_cnt", 0);
-    APPEND_UINT64_COLUMN(b, "kind_default_value_cnt", 0);
     APPEND_UINT64_COLUMN(b, "elf_fixup_ok_cnt", 0);
     APPEND_UINT64_COLUMN(b, "exec_fail_cnt", 0);
     APPEND_UINT64_COLUMN(b, "verify_cnt", 0);
@@ -1446,17 +1449,9 @@ void MetricsLogger::log_mutation_health(
     uint64_t kutator_parse_fail_cnt,
     uint64_t encode_overflow_cnt,
     uint64_t no_candidates_cnt,
-    uint64_t kind_mutate_cnt,
-    uint64_t kind_add_cnt,
-    uint64_t kind_delete_cnt,
-    uint64_t kind_crossover_copy_cnt,
-    uint64_t kind_crossover_clone_cnt,
-    uint64_t kind_dup_in_place_cnt,
-    uint64_t kind_dup_and_mutate_cnt,
-    uint64_t kind_shuffle_cnt,
-    uint64_t kind_splice_swap_cnt,
-    uint64_t kind_insert_at_pos_cnt,
-    uint64_t kind_default_value_cnt,
+    const uint64_t* kind_counts,
+    const char* const* kind_names,
+    uint32_t kind_num,
     uint64_t elf_fixup_ok_cnt,
     uint64_t exec_fail_cnt,
     uint64_t verify_cnt)
@@ -1536,17 +1531,12 @@ void MetricsLogger::log_mutation_health(
             jb.add("lpm_parse_fail_cnt", kutator_parse_fail_cnt);
             jb.add("encode_overflow_cnt", encode_overflow_cnt);
             jb.add("no_candidates_cnt", no_candidates_cnt);
-            jb.add("kind_mutate_cnt", kind_mutate_cnt);
-            jb.add("kind_add_cnt", kind_add_cnt);
-            jb.add("kind_delete_cnt", kind_delete_cnt);
-            jb.add("kind_crossover_copy_cnt", kind_crossover_copy_cnt);
-            jb.add("kind_crossover_clone_cnt", kind_crossover_clone_cnt);
-            jb.add("kind_dup_in_place_cnt", kind_dup_in_place_cnt);
-            jb.add("kind_dup_and_mutate_cnt", kind_dup_and_mutate_cnt);
-            jb.add("kind_shuffle_cnt", kind_shuffle_cnt);
-            jb.add("kind_splice_swap_cnt", kind_splice_swap_cnt);
-            jb.add("kind_insert_at_pos_cnt", kind_insert_at_pos_cnt);
-            jb.add("kind_default_value_cnt", kind_default_value_cnt);
+            for (uint32_t k = 0; k < kind_num; k++) {
+                std::string col = "kind_";
+                col += (kind_names[k] ? kind_names[k] : "unknown");
+                col += "_cnt";
+                jb.add(col, kind_counts[k]);
+            }
             jb.add("elf_fixup_ok_cnt", elf_fixup_ok_cnt);
             jb.add("exec_fail_cnt", exec_fail_cnt);
             jb.add("verify_cnt", verify_cnt);
@@ -1631,33 +1621,39 @@ void MetricsLogger::log_mutation_health(
     APPEND_UINT64_COLUMN(b, "lpm_parse_fail_cnt", kutator_parse_fail_cnt);
     APPEND_UINT64_COLUMN(b, "encode_overflow_cnt", encode_overflow_cnt);
     APPEND_UINT64_COLUMN(b, "no_candidates_cnt", no_candidates_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_mutate_cnt", kind_mutate_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_add_cnt", kind_add_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_delete_cnt", kind_delete_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_crossover_copy_cnt", kind_crossover_copy_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_crossover_clone_cnt", kind_crossover_clone_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_dup_in_place_cnt", kind_dup_in_place_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_dup_and_mutate_cnt", kind_dup_and_mutate_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_shuffle_cnt", kind_shuffle_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_splice_swap_cnt", kind_splice_swap_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_insert_at_pos_cnt", kind_insert_at_pos_cnt);
-    APPEND_UINT64_COLUMN(b, "kind_default_value_cnt", kind_default_value_cnt);
+    for (uint32_t k = 0; k < kind_num; k++) {
+        std::string col = "kind_";
+        col += (kind_names[k] ? kind_names[k] : "unknown");
+        col += "_cnt";
+        APPEND_UINT64_COLUMN(b, col.c_str(), kind_counts[k]);
+    }
     APPEND_UINT64_COLUMN(b, "elf_fixup_ok_cnt", elf_fixup_ok_cnt);
     APPEND_UINT64_COLUMN(b, "exec_fail_cnt", exec_fail_cnt);
     APPEND_UINT64_COLUMN(b, "verify_cnt", verify_cnt);
 
-    enqueue_insert_("execution_events", &b, "mutation_health");
+    // Capture kind_names for lazy column creation on the logger thread.
+    std::vector<std::string> names_vec;
+    names_vec.reserve(kind_num);
+    for (uint32_t k = 0; k < kind_num; k++) {
+        names_vec.emplace_back(kind_names[k] ? kind_names[k] : "unknown");
+    }
+    auto block = std::make_shared<clickhouse::Block>(std::move(b));
+    enqueue_log_([this, block, names_vec = std::move(names_vec)]() {
+        // Lazily add any new kind columns before inserting
+        std::vector<const char*> ptrs;
+        ptrs.reserve(names_vec.size());
+        for (const auto& s : names_vec) ptrs.push_back(s.c_str());
+        ensure_kind_columns_(ptrs.data(), static_cast<uint32_t>(ptrs.size()));
+
+        insert_with_retry_("execution_events", const_cast<clickhouse::Block*>(block.get()), "mutation_health");
+    }, "mutation_health");
 #else
     (void)total_executions; (void)proto_parse_calls; (void)proto_parse_successes;
     (void)custom_mutator_calls; (void)custom_mutator_successes; (void)rate;
     (void)proto_round_cnt; (void)proto_scan_ok_cnt; (void)total_round_cnt;
     (void)kutator_mutate_cnt; (void)kutator_crossover_cnt; (void)kutator_parse_success_cnt; (void)kutator_parse_fail_cnt;
     (void)encode_overflow_cnt; (void)no_candidates_cnt;
-    (void)kind_mutate_cnt; (void)kind_add_cnt; (void)kind_delete_cnt;
-    (void)kind_crossover_copy_cnt; (void)kind_crossover_clone_cnt;
-    (void)kind_dup_in_place_cnt; (void)kind_dup_and_mutate_cnt;
-    (void)kind_shuffle_cnt; (void)kind_splice_swap_cnt;
-    (void)kind_insert_at_pos_cnt; (void)kind_default_value_cnt;
+    (void)kind_counts; (void)kind_names; (void)kind_num;
     (void)elf_fixup_ok_cnt; (void)exec_fail_cnt; (void)verify_cnt;
 #endif
 }

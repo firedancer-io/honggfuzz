@@ -127,17 +127,9 @@ __attribute__((weak)) uint64_t solfuzz_kutator_parse_success_calls(void);
 __attribute__((weak)) uint64_t solfuzz_kutator_parse_fail_calls(void);
 __attribute__((weak)) uint64_t solfuzz_kutator_encode_overflow(void);
 __attribute__((weak)) uint64_t solfuzz_kutator_no_candidates(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_mutate(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_add(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_delete(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_crossover_copy(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_crossover_clone(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_dup_in_place(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_dup_and_mutate(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_shuffle(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_splice_swap(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_insert_at_pos(void);
-__attribute__((weak)) uint64_t solfuzz_kutator_kind_default_value(void);
+__attribute__((weak)) uint32_t solfuzz_kutator_kind_num(void);
+__attribute__((weak)) uint64_t solfuzz_kutator_kind_count(uint32_t idx);
+__attribute__((weak)) const char* solfuzz_kutator_kind_name(uint32_t idx);
 __attribute__((weak)) uint64_t solfuzz_elf_fixup_ok_calls(void);
 __attribute__((weak)) uint64_t solfuzz_exec_fail_calls(void);
 __attribute__((weak)) uint64_t solfuzz_verify_calls(void);
@@ -194,49 +186,21 @@ static void              HonggfuzzRunOneInput(const uint8_t* buf, size_t len) {
         ATOMIC_SET(globalCovFeedback->pidKutatorNoCandidates[my_thread_no].val,
             solfuzz_kutator_no_candidates());
     }
-    if (solfuzz_kutator_kind_mutate) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindMutate[my_thread_no].val,
-            solfuzz_kutator_kind_mutate());
-    }
-    if (solfuzz_kutator_kind_add) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindAdd[my_thread_no].val,
-            solfuzz_kutator_kind_add());
-    }
-    if (solfuzz_kutator_kind_delete) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindDelete[my_thread_no].val,
-            solfuzz_kutator_kind_delete());
-    }
-    if (solfuzz_kutator_kind_crossover_copy) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindCrossoverCopy[my_thread_no].val,
-            solfuzz_kutator_kind_crossover_copy());
-    }
-    if (solfuzz_kutator_kind_crossover_clone) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindCrossoverClone[my_thread_no].val,
-            solfuzz_kutator_kind_crossover_clone());
-    }
-    if (solfuzz_kutator_kind_dup_in_place) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindDupInPlace[my_thread_no].val,
-            solfuzz_kutator_kind_dup_in_place());
-    }
-    if (solfuzz_kutator_kind_dup_and_mutate) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindDupAndMutate[my_thread_no].val,
-            solfuzz_kutator_kind_dup_and_mutate());
-    }
-    if (solfuzz_kutator_kind_shuffle) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindShuffle[my_thread_no].val,
-            solfuzz_kutator_kind_shuffle());
-    }
-    if (solfuzz_kutator_kind_splice_swap) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindSpliceSwap[my_thread_no].val,
-            solfuzz_kutator_kind_splice_swap());
-    }
-    if (solfuzz_kutator_kind_insert_at_pos) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindInsertAtPos[my_thread_no].val,
-            solfuzz_kutator_kind_insert_at_pos());
-    }
-    if (solfuzz_kutator_kind_default_value) {
-        ATOMIC_SET(globalCovFeedback->pidKutatorKindDefaultValue[my_thread_no].val,
-            solfuzz_kutator_kind_default_value());
+    if (solfuzz_kutator_kind_num && solfuzz_kutator_kind_count) {
+        uint32_t n = solfuzz_kutator_kind_num();
+        if (n > _HF_KUTATOR_KIND_MAX) n = _HF_KUTATOR_KIND_MAX;
+        globalCovFeedback->kutatorKindNum = n;
+        for (uint32_t i = 0; i < n; i++) {
+            ATOMIC_SET(globalCovFeedback->pidKutatorKind[i][my_thread_no].val,
+                solfuzz_kutator_kind_count(i));
+            if (solfuzz_kutator_kind_name && globalCovFeedback->kutatorKindNames[i][0] == '\0') {
+                const char* name = solfuzz_kutator_kind_name(i);
+                if (name) {
+                    snprintf(globalCovFeedback->kutatorKindNames[i],
+                             _HF_KUTATOR_NAME_MAX, "%s", name);
+                }
+            }
+        }
     }
     if (solfuzz_elf_fixup_ok_calls) {
         ATOMIC_SET(globalCovFeedback->pidElfFixupOkCnt[my_thread_no].val,

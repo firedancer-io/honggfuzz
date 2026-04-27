@@ -33,9 +33,7 @@ typedef void (*log_mutation_health_fn)(
     uint64_t, uint64_t, uint64_t,                       /* proto_round, proto_scan, total_round */
     uint64_t, uint64_t, uint64_t, uint64_t,             /* kutator_mutate, kutator_xover, kutator_parse_ok, kutator_parse_fail */
     uint64_t, uint64_t,                                 /* encode_overflow, no_candidates */
-    uint64_t, uint64_t, uint64_t,                       /* kind_mutate, kind_add, kind_delete */
-    uint64_t, uint64_t, uint64_t, uint64_t,             /* kind_xover_copy, kind_xover_clone, kind_dup_in_place, kind_dup_and_mutate */
-    uint64_t, uint64_t, uint64_t, uint64_t,             /* kind_shuffle, kind_splice_swap, kind_insert_at_pos, kind_default_value */
+    const uint64_t*, const char* const*, uint32_t,      /* kind_counts, kind_names, kind_num */
     uint64_t, uint64_t, uint64_t                        /* elf_fixup_ok, exec_fail, verify */
 );
 typedef void (*log_stats_fn)(
@@ -269,17 +267,9 @@ void hfuzz_metrics_log_mutation_health(
     uint64_t kutator_parse_fail_cnt,
     uint64_t encode_overflow_cnt,
     uint64_t no_candidates_cnt,
-    uint64_t kind_mutate_cnt,
-    uint64_t kind_add_cnt,
-    uint64_t kind_delete_cnt,
-    uint64_t kind_crossover_copy_cnt,
-    uint64_t kind_crossover_clone_cnt,
-    uint64_t kind_dup_in_place_cnt,
-    uint64_t kind_dup_and_mutate_cnt,
-    uint64_t kind_shuffle_cnt,
-    uint64_t kind_splice_swap_cnt,
-    uint64_t kind_insert_at_pos_cnt,
-    uint64_t kind_default_value_cnt,
+    const uint64_t* kind_counts,
+    const char* const* kind_names,
+    uint32_t kind_num,
     uint64_t elf_fixup_ok_cnt,
     uint64_t exec_fail_cnt,
     uint64_t verify_cnt
@@ -291,11 +281,7 @@ void hfuzz_metrics_log_mutation_health(
                                proto_round_cnt, proto_scan_ok_cnt, total_round_cnt,
                                kutator_mutate_cnt, kutator_crossover_cnt, kutator_parse_success_cnt, kutator_parse_fail_cnt,
                                encode_overflow_cnt, no_candidates_cnt,
-                               kind_mutate_cnt, kind_add_cnt, kind_delete_cnt,
-                               kind_crossover_copy_cnt, kind_crossover_clone_cnt,
-                               kind_dup_in_place_cnt, kind_dup_and_mutate_cnt,
-                               kind_shuffle_cnt, kind_splice_swap_cnt,
-                               kind_insert_at_pos_cnt, kind_default_value_cnt,
+                               kind_counts, kind_names, kind_num,
                                elf_fixup_ok_cnt, exec_fail_cnt, verify_cnt);
     }
 }

@@ -842,13 +842,12 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                         uint64_t ppCalls = 0, ppSucc = 0, cmCalls = 0, cmSucc = 0;
                         uint64_t kutMutate = 0, kutCrossOver = 0, kutParseOk = 0, kutParseFail = 0;
                         uint64_t encOverflow = 0, noCandidates = 0;
-                        uint64_t kindMutate = 0, kindAdd = 0, kindDelete = 0;
-                        uint64_t kindXoverCopy = 0, kindXoverClone = 0;
-                        uint64_t kindDupInPlace = 0, kindDupAndMut = 0;
-                        uint64_t kindShuffle = 0, kindSpliceSwap = 0;
-                        uint64_t kindInsertAtPos = 0, kindDefaultVal = 0;
+                        uint32_t kindNum = 0;
+                        uint64_t kindCounts[_HF_KUTATOR_KIND_MAX] = {0};
                         uint64_t elfFixupOk = 0, execFail = 0, verifyCalls = 0;
                         if (cov) {
+                            kindNum = cov->kutatorKindNum;
+                            if (kindNum > _HF_KUTATOR_KIND_MAX) kindNum = _HF_KUTATOR_KIND_MAX;
                             for (size_t t = 0; t < hfuzz->threads.threadsMax; t++) {
                                 ppCalls += ATOMIC_GET(cov->pidProtoParseCallsCnt[t].val);
                                 ppSucc  += ATOMIC_GET(cov->pidProtoParseSuccessesCnt[t].val);
@@ -861,17 +860,9 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                                 kutParseFail += ATOMIC_GET(cov->pidKutatorParseFailCnt[t].val);
                                 encOverflow  += ATOMIC_GET(cov->pidKutatorEncodeOverflow[t].val);
                                 noCandidates += ATOMIC_GET(cov->pidKutatorNoCandidates[t].val);
-                                kindMutate   += ATOMIC_GET(cov->pidKutatorKindMutate[t].val);
-                                kindAdd      += ATOMIC_GET(cov->pidKutatorKindAdd[t].val);
-                                kindDelete   += ATOMIC_GET(cov->pidKutatorKindDelete[t].val);
-                                kindXoverCopy  += ATOMIC_GET(cov->pidKutatorKindCrossoverCopy[t].val);
-                                kindXoverClone += ATOMIC_GET(cov->pidKutatorKindCrossoverClone[t].val);
-                                kindDupInPlace += ATOMIC_GET(cov->pidKutatorKindDupInPlace[t].val);
-                                kindDupAndMut  += ATOMIC_GET(cov->pidKutatorKindDupAndMutate[t].val);
-                                kindShuffle    += ATOMIC_GET(cov->pidKutatorKindShuffle[t].val);
-                                kindSpliceSwap += ATOMIC_GET(cov->pidKutatorKindSpliceSwap[t].val);
-                                kindInsertAtPos += ATOMIC_GET(cov->pidKutatorKindInsertAtPos[t].val);
-                                kindDefaultVal  += ATOMIC_GET(cov->pidKutatorKindDefaultValue[t].val);
+                                for (uint32_t k = 0; k < kindNum; k++) {
+                                    kindCounts[k] += ATOMIC_GET(cov->pidKutatorKind[k][t].val);
+                                }
                                 elfFixupOk   += ATOMIC_GET(cov->pidElfFixupOkCnt[t].val);
                                 execFail     += ATOMIC_GET(cov->pidExecFailCnt[t].val);
                                 verifyCalls  += ATOMIC_GET(cov->pidVerifyCnt[t].val);
@@ -881,22 +872,30 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                         uint64_t protoRounds = ATOMIC_GET(hfuzz->mutate.protoRoundCnt);
                         uint64_t protoScanOk = ATOMIC_GET(hfuzz->mutate.protoScanOkCnt);
                         uint64_t totalRounds = ATOMIC_GET(hfuzz->mutate.totalRoundCnt);
+                        char kindsBuf[512] = {0};
+                        {
+                            int pos = 0;
+                            pos += snprintf(kindsBuf + pos, sizeof(kindsBuf) - pos, "kinds{");
+                            for (uint32_t k = 0; k < kindNum && pos < (int)sizeof(kindsBuf) - 32; k++) {
+                                const char* name = cov ? cov->kutatorKindNames[k] : "?";
+                                if (name[0] == '\0') name = "?";
+                                pos += snprintf(kindsBuf + pos, sizeof(kindsBuf) - pos,
+                                    "%s%s=%zu", k > 0 ? " " : "", name, (size_t)kindCounts[k]);
+                            }
+                            snprintf(kindsBuf + pos, sizeof(kindsBuf) - pos, "}");
+                        }
                         LOG_I("[MUTATION-HEALTH] proto_parse=%zu/%zu (%.1f%%) custom_mutator=%zu/%zu"
                               " proto_rounds=%zu/%zu scan_ok=%zu"
                               " kutator_mut=%zu xover=%zu parse_ok=%zu parse_fail=%zu"
                               " enc_overflow=%zu no_candidates=%zu"
-                              " kinds{mut=%zu add=%zu del=%zu xc=%zu xk=%zu dup=%zu dm=%zu sh=%zu ss=%zu ip=%zu dv=%zu}"
+                              " %s"
                               " elf_ok=%zu exec_fail=%zu verify=%zu",
                               (size_t)ppSucc, (size_t)ppCalls, (double)parseRate,
                               (size_t)cmSucc, (size_t)cmCalls,
                               (size_t)protoRounds, (size_t)totalRounds, (size_t)protoScanOk,
                               (size_t)kutMutate, (size_t)kutCrossOver, (size_t)kutParseOk, (size_t)kutParseFail,
                               (size_t)encOverflow, (size_t)noCandidates,
-                              (size_t)kindMutate, (size_t)kindAdd, (size_t)kindDelete,
-                              (size_t)kindXoverCopy, (size_t)kindXoverClone,
-                              (size_t)kindDupInPlace, (size_t)kindDupAndMut,
-                              (size_t)kindShuffle, (size_t)kindSpliceSwap,
-                              (size_t)kindInsertAtPos, (size_t)kindDefaultVal,
+                              kindsBuf,
                               (size_t)elfFixupOk, (size_t)execFail, (size_t)verifyCalls);
                     }
 
@@ -1033,8 +1032,9 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
             uint64_t ppCalls = 0, ppSucc = 0, cmCalls = 0, cmSucc = 0;
             uint64_t kutMut = 0, kutXover = 0, kutParseOk = 0, kutFail = 0;
             uint64_t encOvf = 0, noCand = 0;
-            uint64_t kMut = 0, kAdd = 0, kDel = 0, kXC = 0, kXK = 0;
-            uint64_t kDIP = 0, kDM = 0, kSh = 0, kSS = 0, kIP = 0, kDV = 0;
+            uint32_t kindNum2 = cov->kutatorKindNum;
+            if (kindNum2 > _HF_KUTATOR_KIND_MAX) kindNum2 = _HF_KUTATOR_KIND_MAX;
+            uint64_t kindCounts2[_HF_KUTATOR_KIND_MAX] = {0};
             uint64_t elfOk = 0, execFail = 0, verify = 0;
             for (size_t t = 0; t < run->global->threads.threadsMax; t++) {
                 ppCalls  += ATOMIC_GET(cov->pidProtoParseCallsCnt[t].val);
@@ -1047,17 +1047,9 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                 kutFail  += ATOMIC_GET(cov->pidKutatorParseFailCnt[t].val);
                 encOvf   += ATOMIC_GET(cov->pidKutatorEncodeOverflow[t].val);
                 noCand   += ATOMIC_GET(cov->pidKutatorNoCandidates[t].val);
-                kMut     += ATOMIC_GET(cov->pidKutatorKindMutate[t].val);
-                kAdd     += ATOMIC_GET(cov->pidKutatorKindAdd[t].val);
-                kDel     += ATOMIC_GET(cov->pidKutatorKindDelete[t].val);
-                kXC      += ATOMIC_GET(cov->pidKutatorKindCrossoverCopy[t].val);
-                kXK      += ATOMIC_GET(cov->pidKutatorKindCrossoverClone[t].val);
-                kDIP     += ATOMIC_GET(cov->pidKutatorKindDupInPlace[t].val);
-                kDM      += ATOMIC_GET(cov->pidKutatorKindDupAndMutate[t].val);
-                kSh      += ATOMIC_GET(cov->pidKutatorKindShuffle[t].val);
-                kSS      += ATOMIC_GET(cov->pidKutatorKindSpliceSwap[t].val);
-                kIP      += ATOMIC_GET(cov->pidKutatorKindInsertAtPos[t].val);
-                kDV      += ATOMIC_GET(cov->pidKutatorKindDefaultValue[t].val);
+                for (uint32_t k = 0; k < kindNum2; k++) {
+                    kindCounts2[k] += ATOMIC_GET(cov->pidKutatorKind[k][t].val);
+                }
                 elfOk    += ATOMIC_GET(cov->pidElfFixupOkCnt[t].val);
                 execFail += ATOMIC_GET(cov->pidExecFailCnt[t].val);
                 verify   += ATOMIC_GET(cov->pidVerifyCnt[t].val);
@@ -1066,14 +1058,16 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                 uint64_t protoRounds = ATOMIC_GET(run->global->mutate.protoRoundCnt);
                 uint64_t protoScanOk = ATOMIC_GET(run->global->mutate.protoScanOkCnt);
                 uint64_t totalRounds = ATOMIC_GET(run->global->mutate.totalRoundCnt);
+                const char* kindNames2[_HF_KUTATOR_KIND_MAX];
+                for (uint32_t k = 0; k < kindNum2; k++) {
+                    kindNames2[k] = cov->kutatorKindNames[k];
+                }
                 hfuzz_metrics_log_mutation_health(s->mutationsCnt,
                                                   ppCalls, ppSucc, cmCalls, cmSucc,
                                                   protoRounds, protoScanOk, totalRounds,
                                                   kutMut, kutXover, kutParseOk, kutFail,
                                                   encOvf, noCand,
-                                                  kMut, kAdd, kDel,
-                                                  kXC, kXK, kDIP, kDM,
-                                                  kSh, kSS, kIP, kDV,
+                                                  kindCounts2, kindNames2, kindNum2,
                                                   elfOk, execFail, verify);
             }
         }

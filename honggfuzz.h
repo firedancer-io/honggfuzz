@@ -252,17 +252,11 @@ typedef struct {
     cntCacheLine_t pidKutatorParseFailCnt[_HF_THREAD_MAX];
     cntCacheLine_t pidKutatorEncodeOverflow[_HF_THREAD_MAX];
     cntCacheLine_t pidKutatorNoCandidates[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindMutate[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindAdd[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindDelete[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindCrossoverCopy[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindCrossoverClone[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindDupInPlace[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindDupAndMutate[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindShuffle[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindSpliceSwap[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindInsertAtPos[_HF_THREAD_MAX];
-    cntCacheLine_t pidKutatorKindDefaultValue[_HF_THREAD_MAX];
+#define _HF_KUTATOR_KIND_MAX   32
+#define _HF_KUTATOR_NAME_MAX  32
+    uint32_t       kutatorKindNum;
+    char           kutatorKindNames[_HF_KUTATOR_KIND_MAX][_HF_KUTATOR_NAME_MAX];
+    cntCacheLine_t pidKutatorKind[_HF_KUTATOR_KIND_MAX][_HF_THREAD_MAX];
     cntCacheLine_t pidElfFixupOkCnt[_HF_THREAD_MAX];
     cntCacheLine_t pidExecFailCnt[_HF_THREAD_MAX];
     cntCacheLine_t pidVerifyCnt[_HF_THREAD_MAX];

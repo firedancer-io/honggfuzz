@@ -604,24 +604,93 @@ static const std::vector<TableSchema> get_table_schemas() {
             "execution_events",
             {
                 {"session_id", "String"},
+                {"fuzzer_name", "String"},
+                {"harness_name", "String"},
+                {"fuzz_target", "String"},
+                {"target_names", "Array(String)"},
+                {"target_paths", "Array(String)"},
+                {"program_id", "String"},
+                {"syscall_name", "String"},
+                {"user_name", "String"},
+                {"host_name", "String"},
+                {"task_id", "String"},
+                {"bundle_id", "String"},
+                {"asset_id", "String"},
+                {"organization", "String"},
+                {"project", "String"},
+                {"lineage_name", "String"},
+                {"corpus_group", "String"},
+                {"task_type", "String"},
                 {"event_time", "DateTime64(3)"},
+                {"fuzzer_state", "LowCardinality(String)"},
+                {"dry_run_tested", "UInt64"},
+                {"dry_run_total", "UInt64"},
                 {"total_executions", "UInt64"},
                 {"total_crashes", "UInt64"},
-                {"total_hangs", "UInt32"},
+                {"total_hangs", "UInt64"},
                 {"cpu_usage_pct", "Float32"},
                 {"memory_usage_mb", "UInt64"},
                 {"num_coverage_lines", "UInt32"},
                 {"num_coverage_branches", "UInt32"},
                 {"num_coverage_functions", "UInt32"},
+                {"coverage_cmp", "UInt64"},
+                {"coverage_edge_bucket", "UInt64"},
                 {"corpus_size", "UInt64"},
                 {"corpus_diversity_score", "Float32"},
                 {"total_mutations_executed", "UInt64"},
                 {"total_mutations_successful", "UInt64"},
                 {"mutation_success_rate", "Float32"},
                 {"new_features_discovered", "UInt64"},
-                {"coverage_cmp", "UInt64"},
-                {"coverage_edge_bucket", "UInt64"},
                 {"execs_delta", "UInt64"},
+                {"proto_parse_calls", "UInt64"},
+                {"proto_parse_successes", "UInt64"},
+                {"custom_mutator_calls", "UInt64"},
+                {"custom_mutator_successes", "UInt64"},
+                {"sched_total", "UInt64"},
+                {"repeat_pct", "Float32"},
+                {"high_priority_pct", "Float32"},
+                {"low_priority_pct", "Float32"},
+                {"phase2_pct", "Float32"},
+                {"avg_energy", "UInt64"},
+                {"avg_iters", "Float32"},
+                {"max_iters", "UInt64"},
+                {"energy_min", "UInt64"},
+                {"energy_max", "UInt64"},
+                {"novelty_decay_cnt", "UInt64"},
+                {"fresh_boost_cnt", "UInt64"},
+                {"stale_penalty_cnt", "UInt64"},
+                {"diminishing_cnt", "UInt64"},
+                {"depth_penalty_cnt", "UInt64"},
+                {"corpus_count", "UInt64"},
+                {"global_avg_energy", "UInt64"},
+                {"exec_avg_us", "UInt64"},
+                {"exec_max_us", "UInt64"},
+                {"slow_exec_cnt", "UInt64"},
+                {"mut_hit_rate_pct", "Float32"},
+                {"plateau_secs", "UInt64"},
+                {"queue_wraps", "UInt64"},
+                {"max_depth", "UInt32"},
+                {"unique_crashes", "UInt64"},
+                {"timeouts", "UInt64"},
+                {"fertile_boosts", "UInt64"},
+                {"saturated_lineages", "UInt64"},
+                {"explore_selects", "UInt64"},
+                {"secs_since_crash", "UInt64"},
+                {"stagnation_secs", "UInt64"},
+                {"corpus_growth", "UInt64"},
+                {"inputs_truncated_too_large", "UInt64"},
+                {"proto_round_cnt", "UInt64"},
+                {"proto_scan_ok_cnt", "UInt64"},
+                {"total_round_cnt", "UInt64"},
+                {"lpm_mutate_cnt", "UInt64"},
+                {"lpm_crossover_cnt", "UInt64"},
+                {"lpm_parse_success_cnt", "UInt64"},
+                {"lpm_parse_fail_cnt", "UInt64"},
+                {"encode_overflow_cnt", "UInt64"},
+                {"no_candidates_cnt", "UInt64"},
+                {"elf_fixup_ok_cnt", "UInt64"},
+                {"exec_fail_cnt", "UInt64"},
+                {"verify_cnt", "UInt64"},
             },
             "toYYYYMM(event_time)",
             {"event_time", "session_id"}
@@ -1187,7 +1256,7 @@ void MetricsLogger::log_fuzzer_stats(
             jb.add("dry_run_total", static_cast<uint32_t>(dry_run_total));
             jb.add("total_executions", total_executions);
             jb.add("total_crashes", total_crashes);
-            jb.add("total_hangs", static_cast<uint32_t>(0));
+            jb.add("total_hangs", static_cast<uint64_t>(0));
             jb.add("cpu_usage_pct", 0.0f);
             jb.add("memory_usage_mb", static_cast<uint64_t>(0));
             jb.add("num_coverage_lines", static_cast<uint32_t>(coverage_pcs));
@@ -1267,7 +1336,7 @@ void MetricsLogger::log_fuzzer_stats(
     APPEND_DATETIME64_COLUMN(b, "event_time", now_epoch_ms_(), 3);
     APPEND_UINT64_COLUMN(b, "total_executions", total_executions);
     APPEND_UINT64_COLUMN(b, "total_crashes", total_crashes);
-    APPEND_UINT32_COLUMN(b, "total_hangs", 0);
+    APPEND_UINT64_COLUMN(b, "total_hangs", 0);
     APPEND_FLOAT32_COLUMN(b, "cpu_usage_pct", 0.0f);
     APPEND_UINT64_COLUMN(b, "memory_usage_mb", 0);
     APPEND_UINT32_COLUMN(b, "num_coverage_lines", static_cast<uint32_t>(coverage_pcs));
@@ -1422,9 +1491,9 @@ void MetricsLogger::log_execution_metrics(
 
     // Table-specific columns
     APPEND_DATETIME64_COLUMN(b, "event_time", now_epoch_ms_(), 3);
-    APPEND_UINT32_COLUMN(b, "total_executions", total_executions);
-    APPEND_UINT32_COLUMN(b, "total_crashes", total_crashes);
-    APPEND_UINT32_COLUMN(b, "total_hangs", total_hangs);
+    APPEND_UINT64_COLUMN(b, "total_executions", total_executions);
+    APPEND_UINT64_COLUMN(b, "total_crashes", total_crashes);
+    APPEND_UINT64_COLUMN(b, "total_hangs", total_hangs);
     APPEND_FLOAT32_COLUMN(b, "cpu_usage_pct", cpu_usage);
     APPEND_UINT64_COLUMN(b, "memory_usage_mb", memory_usage_mb);
     APPEND_UINT32_COLUMN(b, "num_coverage_lines", coverage_lines);
@@ -1480,7 +1549,7 @@ void MetricsLogger::log_mutation_health(
             jb.add("total_executions", total_executions);
             jb.add("execs_delta", static_cast<uint64_t>(0));
             jb.add("total_crashes", static_cast<uint64_t>(0));
-            jb.add("total_hangs", static_cast<uint32_t>(0));
+            jb.add("total_hangs", static_cast<uint64_t>(0));
             jb.add("cpu_usage_pct", 0.0f);
             jb.add("memory_usage_mb", static_cast<uint64_t>(0));
             jb.add("num_coverage_lines", static_cast<uint32_t>(0));
@@ -1563,7 +1632,7 @@ void MetricsLogger::log_mutation_health(
     APPEND_DATETIME64_COLUMN(b, "event_time", now_epoch_ms_(), 3);
     APPEND_UINT64_COLUMN(b, "total_executions", total_executions);
     APPEND_UINT64_COLUMN(b, "total_crashes", 0);
-    APPEND_UINT32_COLUMN(b, "total_hangs", 0);
+    APPEND_UINT64_COLUMN(b, "total_hangs", 0);
     APPEND_FLOAT32_COLUMN(b, "cpu_usage_pct", 0.0f);
     APPEND_UINT64_COLUMN(b, "memory_usage_mb", 0);
     APPEND_UINT32_COLUMN(b, "num_coverage_lines", 0);

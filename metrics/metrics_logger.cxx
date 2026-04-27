@@ -12,6 +12,19 @@ static std::string getenv_or(const char* k, const char* dflt) {
     const char* v = std::getenv(k);
     return (v && *v) ? std::string(v) : std::string(dflt);
 }
+
+static std::string sanitize_kind_col(const char* raw_name) {
+    const char* src = raw_name ? raw_name : "unknown";
+    std::string safe;
+    for (const char* p = src; *p; p++) {
+        if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+            (*p >= '0' && *p <= '9') || *p == '_') {
+            safe += *p;
+        }
+    }
+    if (safe.empty()) safe = "unknown";
+    return "kind_" + safe + "_cnt";
+}
 } // namespace
 
 #ifdef SOLFUZZ_CLICKHOUSE_ENABLED
@@ -940,16 +953,7 @@ void MetricsLogger::ensure_kind_columns_(const char* const* kind_names, uint32_t
     if (!client_) return;
 
     for (uint32_t k = 0; k < kind_num; k++) {
-        const char* raw = kind_names[k] ? kind_names[k] : "unknown";
-        std::string safe;
-        for (const char* p = raw; *p; p++) {
-            if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
-                (*p >= '0' && *p <= '9') || *p == '_') {
-                safe += *p;
-            }
-        }
-        if (safe.empty()) safe = "unknown";
-        std::string col = "kind_" + safe + "_cnt";
+        std::string col = sanitize_kind_col(kind_names[k]);
 
         if (ensured_kind_columns_.count(col)) continue;
 
@@ -1611,10 +1615,7 @@ void MetricsLogger::log_mutation_health(
             jb.add("encode_overflow_cnt", encode_overflow_cnt);
             jb.add("no_candidates_cnt", no_candidates_cnt);
             for (uint32_t k = 0; k < kind_num; k++) {
-                std::string col = "kind_";
-                col += (kind_names[k] ? kind_names[k] : "unknown");
-                col += "_cnt";
-                jb.add(col.c_str(), kind_counts[k]);
+                jb.add(sanitize_kind_col(kind_names[k]).c_str(), kind_counts[k]);
             }
             jb.add("elf_fixup_ok_cnt", elf_fixup_ok_cnt);
             jb.add("exec_fail_cnt", exec_fail_cnt);
@@ -1701,9 +1702,7 @@ void MetricsLogger::log_mutation_health(
     APPEND_UINT64_COLUMN(b, "encode_overflow_cnt", encode_overflow_cnt);
     APPEND_UINT64_COLUMN(b, "no_candidates_cnt", no_candidates_cnt);
     for (uint32_t k = 0; k < kind_num; k++) {
-        std::string col = "kind_";
-        col += (kind_names[k] ? kind_names[k] : "unknown");
-        col += "_cnt";
+        std::string col = sanitize_kind_col(kind_names[k]);
         APPEND_UINT64_COLUMN(b, col.c_str(), kind_counts[k]);
     }
     APPEND_UINT64_COLUMN(b, "elf_fixup_ok_cnt", elf_fixup_ok_cnt);

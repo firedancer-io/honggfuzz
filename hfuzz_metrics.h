@@ -281,6 +281,18 @@ void hfuzz_metrics_log_stats(
  * proto_round_cnt:          mangle_mangleContent rounds using proto-aware mutation
  * proto_scan_ok_cnt:        proto_scan_fields calls that found >= 1 field
  * total_round_cnt:          Total mangle_mangleContent calls
+ * kutator_mutate_cnt:       Kutator LLVMFuzzerCustomMutator invocations
+ * kutator_crossover_cnt:    Kutator LLVMFuzzerCustomCrossOver invocations
+ * kutator_parse_success_cnt: Kutator protobuf parse successes
+ * kutator_parse_fail_cnt:   Kutator protobuf parse failures
+ * encode_overflow_cnt:      Mutations that exceeded the output buffer size
+ * no_candidates_cnt:        Mutations where no candidate fields were found
+ * kind_counts:              Per-MutationKind counters (array, kind_num entries)
+ * kind_names:               Per-MutationKind display names (array, kind_num entries, may contain NULL)
+ * kind_num:                 Number of MutationKind variants (length of kind_counts/kind_names)
+ * elf_fixup_ok_cnt:         Successful ELF fixup calls
+ * exec_fail_cnt:            Harness executions that returned failure
+ * verify_cnt:               Crash verification attempts
  */
 void hfuzz_metrics_log_mutation_health(
     uint64_t total_executions,

@@ -200,10 +200,8 @@ static void              HonggfuzzRunOneInput(const uint8_t* buf, size_t len) {
                         &globalCovFeedback->kutatorKindNameReady[i],
                         &expected, 1, memory_order_acq_rel, memory_order_acquire)) {
                     const char* name = solfuzz_kutator_kind_name(i);
-                    if (name) {
-                        snprintf(globalCovFeedback->kutatorKindNames[i],
-                                 _HF_KUTATOR_NAME_MAX, "%s", name);
-                    }
+                    snprintf(globalCovFeedback->kutatorKindNames[i],
+                             _HF_KUTATOR_NAME_MAX, "%s", name ? name : "unknown");
                     atomic_store_explicit(&globalCovFeedback->kutatorKindNameReady[i], 2, memory_order_release);
                 }
             }

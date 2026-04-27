@@ -966,7 +966,10 @@ void MetricsLogger::ensure_kind_columns_(const char* const* kind_names, uint32_t
     if (!ch_.enabled || !m_tables_initialized.load()) return;
 
     std::lock_guard<std::mutex> lock(m_client_mutex);
-    if (!client_) return;
+    if (!client_) {
+        try { ensure_client_unlocked_(); } catch (...) {}
+        if (!client_) return;
+    }
 
     for (uint32_t k = 0; k < kind_num; k++) {
         std::string col = sanitize_kind_col(kind_names[k]);

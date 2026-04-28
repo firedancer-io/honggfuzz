@@ -293,6 +293,7 @@ void hfuzz_metrics_log_stats(
  * elf_fixup_ok_cnt:         Successful ELF fixup calls
  * exec_fail_cnt:            Harness executions that returned failure
  * verify_cnt:               Crash verification attempts
+ * harness_reject_cnt:       Inputs rejected by harness (any executor failed)
  */
 void hfuzz_metrics_log_mutation_health(
     uint64_t total_executions,
@@ -314,7 +315,8 @@ void hfuzz_metrics_log_mutation_health(
     uint32_t kind_num,
     uint64_t elf_fixup_ok_cnt,
     uint64_t exec_fail_cnt,
-    uint64_t verify_cnt
+    uint64_t verify_cnt,
+    uint64_t harness_reject_cnt
 );
 
 #ifdef __cplusplus

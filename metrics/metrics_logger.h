@@ -139,7 +139,7 @@ public:
         const uint64_t* kind_counts,
         const char* const* kind_names,
         uint32_t kind_num,
-        uint64_t elf_fixup_ok_cnt,
+        uint64_t _elf_fixup_ok_cnt,
         uint64_t exec_fail_cnt,
         uint64_t verify_cnt,
         uint64_t harness_reject_cnt);

@@ -181,10 +181,10 @@ typedef struct {
     uint64_t proto_round_cnt;
     uint64_t proto_scan_ok_cnt;
     uint64_t total_round_cnt;
-    uint64_t lpm_mutate_cnt;
-    uint64_t lpm_crossover_cnt;
-    uint64_t lpm_parse_success_cnt;
-    uint64_t lpm_parse_fail_cnt;
+    uint64_t kutator_mutate_cnt;
+    uint64_t kutator_crossover_cnt;
+    uint64_t kutator_parse_success_cnt;
+    uint64_t kutator_parse_fail_cnt;
     uint64_t encode_overflow_cnt;
     uint64_t no_candidates_cnt;
     uint64_t elf_fixup_ok_cnt;

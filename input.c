@@ -1033,10 +1033,10 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                 mc.proto_parse_successes  += ATOMIC_GET(cov->pidProtoParseSuccessesCnt[t].val);
                 mc.custom_mutator_calls   += ATOMIC_GET(cov->pidCustomMutatorCallsCnt[t].val);
                 mc.custom_mutator_successes += ATOMIC_GET(cov->pidCustomMutatorSuccessesCnt[t].val);
-                mc.lpm_mutate_cnt         += ATOMIC_GET(cov->pidKutatorMutateCnt[t].val);
-                mc.lpm_crossover_cnt      += ATOMIC_GET(cov->pidKutatorCrossOverCnt[t].val);
-                mc.lpm_parse_success_cnt  += ATOMIC_GET(cov->pidKutatorParseSuccessCnt[t].val);
-                mc.lpm_parse_fail_cnt     += ATOMIC_GET(cov->pidKutatorParseFailCnt[t].val);
+                mc.kutator_mutate_cnt         += ATOMIC_GET(cov->pidKutatorMutateCnt[t].val);
+                mc.kutator_crossover_cnt      += ATOMIC_GET(cov->pidKutatorCrossOverCnt[t].val);
+                mc.kutator_parse_success_cnt  += ATOMIC_GET(cov->pidKutatorParseSuccessCnt[t].val);
+                mc.kutator_parse_fail_cnt     += ATOMIC_GET(cov->pidKutatorParseFailCnt[t].val);
                 mc.encode_overflow_cnt    += ATOMIC_GET(cov->pidKutatorEncodeOverflow[t].val);
                 mc.no_candidates_cnt      += ATOMIC_GET(cov->pidKutatorNoCandidates[t].val);
                 for (uint32_t k = 0; k < kindNum2; k++) {
@@ -1078,8 +1078,8 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
                                               mc.proto_parse_calls, mc.proto_parse_successes,
                                               mc.custom_mutator_calls, mc.custom_mutator_successes,
                                               mc.proto_round_cnt, mc.proto_scan_ok_cnt, mc.total_round_cnt,
-                                              mc.lpm_mutate_cnt, mc.lpm_crossover_cnt,
-                                              mc.lpm_parse_success_cnt, mc.lpm_parse_fail_cnt,
+                                              mc.kutator_mutate_cnt, mc.kutator_crossover_cnt,
+                                              mc.kutator_parse_success_cnt, mc.kutator_parse_fail_cnt,
                                               mc.encode_overflow_cnt, mc.no_candidates_cnt,
                                               kindCounts2, kindNames2, kindNum2,
                                               0, mc.exec_fail_cnt, mc.verify_cnt, mc.harness_reject_cnt);

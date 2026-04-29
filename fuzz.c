@@ -513,10 +513,10 @@ static bool fuzz_fetchInput(run_t* run) {
                         mc.proto_parse_successes  += ATOMIC_GET(cov2->pidProtoParseSuccessesCnt[i].val);
                         mc.custom_mutator_calls   += ATOMIC_GET(cov2->pidCustomMutatorCallsCnt[i].val);
                         mc.custom_mutator_successes += ATOMIC_GET(cov2->pidCustomMutatorSuccessesCnt[i].val);
-                        mc.lpm_mutate_cnt         += ATOMIC_GET(cov2->pidKutatorMutateCnt[i].val);
-                        mc.lpm_crossover_cnt      += ATOMIC_GET(cov2->pidKutatorCrossOverCnt[i].val);
-                        mc.lpm_parse_success_cnt  += ATOMIC_GET(cov2->pidKutatorParseSuccessCnt[i].val);
-                        mc.lpm_parse_fail_cnt     += ATOMIC_GET(cov2->pidKutatorParseFailCnt[i].val);
+                        mc.kutator_mutate_cnt         += ATOMIC_GET(cov2->pidKutatorMutateCnt[i].val);
+                        mc.kutator_crossover_cnt      += ATOMIC_GET(cov2->pidKutatorCrossOverCnt[i].val);
+                        mc.kutator_parse_success_cnt  += ATOMIC_GET(cov2->pidKutatorParseSuccessCnt[i].val);
+                        mc.kutator_parse_fail_cnt     += ATOMIC_GET(cov2->pidKutatorParseFailCnt[i].val);
                         mc.encode_overflow_cnt    += ATOMIC_GET(cov2->pidKutatorEncodeOverflow[i].val);
                         mc.no_candidates_cnt      += ATOMIC_GET(cov2->pidKutatorNoCandidates[i].val);
                         mc.exec_fail_cnt          += ATOMIC_GET(cov2->pidExecFailCnt[i].val);

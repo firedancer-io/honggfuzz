@@ -523,6 +523,9 @@ static bool fuzz_fetchInput(run_t* run) {
                         mc.verify_cnt             += ATOMIC_GET(cov2->pidVerifyCnt[i].val);
                         mc.harness_reject_cnt     += ATOMIC_GET(cov2->pidHarnessRejectCnt[i].val);
                     }
+                    mc.proto_round_cnt  = ATOMIC_GET(hfuzz->mutate.protoRoundCnt);
+                    mc.proto_scan_ok_cnt = ATOMIC_GET(hfuzz->mutate.protoScanOkCnt);
+                    mc.total_round_cnt  = ATOMIC_GET(hfuzz->mutate.totalRoundCnt);
                 }
                 hfuzz_metrics_log_stats(
                     execs, pcs, edges, 0, 0,

@@ -1936,7 +1936,7 @@ void hfuzz_metrics_bridge_log_stats(
               << ", plateau: " << plateau_secs << "s"
               << ", corpus: " << corpus_count
               << ", crashes: " << unique_crashes
-              << ", lpm_mutate: " << (mutation ? mutation->lpm_mutate_cnt : 0)
+              << ", lpm_mutate: " << (mutation ? mutation->kutator_mutate_cnt : 0)
               << ", cm_calls: " << (mutation ? mutation->custom_mutator_calls : 0)
               << std::endl;
 

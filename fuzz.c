@@ -573,7 +573,7 @@ static bool fuzz_fetchInput(run_t* run) {
                 LOG_E("input_prepareDynamicInput(() failed");
                 return false;
             }
-        } else if (!input_prepareDynamicInput(run, !run->global->exe.useCustomMutator)) {
+        } else if (!input_prepareDynamicInput(run, !(run->global->exe.persistent && run->global->exe.useCustomMutator))) {
             LOG_E("input_prepareDynamicInput() failed");
             return false;
         }
@@ -590,7 +590,7 @@ static bool fuzz_fetchInput(run_t* run) {
                 LOG_E("input_prepareStaticFile() failed");
                 return false;
             }
-        } else if (!input_prepareStaticFile(run, /* rewind= */ true, /* mangle= */ !run->global->exe.useCustomMutator)) {
+        } else if (!input_prepareStaticFile(run, /* rewind= */ true, /* mangle= */ !(run->global->exe.persistent && run->global->exe.useCustomMutator))) {
             LOG_E("input_prepareStaticFile() failed");
             return false;
         }

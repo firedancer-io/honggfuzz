@@ -32,6 +32,7 @@ __attribute__((constructor)) static void init(void) {
         PLOG_F("fstat(fd=%d) of the input file failed", _HF_INPUT_FD);
     }
     inputFileSize = (size_t)st.st_size;
+    if (inputFileSize > _HF_INPUT_MAX_SIZE) inputFileSize = _HF_INPUT_MAX_SIZE;
 
     size_t map_size = inputFileSize > 0 ? inputFileSize : _HF_INPUT_MAX_SIZE;
     if ((inputFile = mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, _HF_INPUT_FD, 0)) ==

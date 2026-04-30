@@ -38,6 +38,15 @@ typedef struct {
 /* Simulate the parent's crash-saving logic from trace.c / subproc.c.
    This is the code path that reads postMutInputLen to determine how
    many bytes to write to the crash file. */
+static void write_all(int fd, const uint8_t *buf, size_t len) {
+    while (len > 0) {
+        ssize_t n = write(fd, buf, len);
+        assert(n > 0);
+        buf += n;
+        len -= (size_t)n;
+    }
+}
+
 static void save_crash_file(const char *path, const uint8_t *shared_input,
     size_t dynfile_size, const shared_feedback_t *fb, size_t max_input_sz) {
     size_t crash_size = dynfile_size;
@@ -47,8 +56,7 @@ static void save_crash_file(const char *path, const uint8_t *shared_input,
     }
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     assert(fd >= 0);
-    ssize_t written = write(fd, shared_input, crash_size);
-    assert((size_t)written == crash_size);
+    write_all(fd, shared_input, crash_size);
     close(fd);
 }
 

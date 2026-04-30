@@ -310,6 +310,7 @@ static void HonggfuzzPersistentLoop(void) {
             if (mut_max == 0 || mut_max > _HF_INPUT_MAX_SIZE) mut_max = _HF_INPUT_MAX_SIZE;
             len = LLVMFuzzerCustomMutator(
                 hf_mut_buf, copy_len, mut_max, hf_mut_counter);
+            if (len > mut_max) len = mut_max;
             if (len > 0)
                 ATOMIC_PRE_INC(globalCovFeedback->pidCustomMutatorSuccessesCnt[my_thread_no].val);
             buf = hf_mut_buf;
@@ -346,6 +347,7 @@ static void HonggfuzzPersistentLoop(void) {
                 size_t new_len = LLVMFuzzerCustomCrossOver(
                     buf, len, donor, donor_len,
                     hf_xover_buf, xo_max, hf_mut_counter);
+                if (new_len > xo_max) new_len = xo_max;
                 if (new_len > 0) {
                     len = new_len;
                     memcpy(hf_mut_buf, hf_xover_buf, len);

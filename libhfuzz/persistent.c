@@ -101,8 +101,31 @@ __attribute__((weak)) int LLVMFuzzerTestOneInput(
 __attribute__((weak)) size_t LLVMFuzzerCustomMutator(
     uint8_t* data, size_t size, size_t max_size, unsigned int seed);
 
+/*
+ * Weak reference to LLVMFuzzerCustomCrossOver.
+ *
+ * Schema-aware crossover: takes two protobuf inputs (destination + donor),
+ * applies field-level crossover (CrossoverCopy / CrossoverClone via
+ * protobuf-kutator), and writes the result to out.  The persistent loop
+ * maintains a ring buffer of recent inputs as donors.
+ */
+__attribute__((weak)) size_t LLVMFuzzerCustomCrossOver(
+    const uint8_t* data1, size_t size1,
+    const uint8_t* data2, size_t size2,
+    uint8_t* out, size_t max_out_size, unsigned int seed);
+
+/* Set to true when running from file (replay mode), not under honggfuzz.
+   Exported so harness code (e.g. Rust FFI) can detect replay vs fuzzing. */
+bool hf_replay_mode = false;
+
 static uint8_t  hf_mut_buf[_HF_INPUT_MAX_SIZE];
 static uint32_t hf_mut_counter = 0;
+
+#define HF_CROSSOVER_RING_CAP 16
+static uint8_t  hf_xover_ring[HF_CROSSOVER_RING_CAP][_HF_INPUT_MAX_SIZE];
+static size_t   hf_xover_lens[HF_CROSSOVER_RING_CAP];
+static uint32_t hf_xover_head  = 0;
+static uint32_t hf_xover_count = 0;
 
 /* Shared coverage feedback struct (mmap'd, visible to parent for metrics).
    my_thread_no indexes our per-thread slot.  Both from instrument.c. */
@@ -243,6 +266,9 @@ static void HonggfuzzPersistentLoop(void) {
 
     if (use_custom_mutator && LLVMFuzzerCustomMutator) {
         LOG_I("In-process protobuf mutation ENABLED (LLVMFuzzerCustomMutator linked)");
+        if (LLVMFuzzerCustomCrossOver) {
+            LOG_I("In-process protobuf crossover ENABLED (LLVMFuzzerCustomCrossOver linked)");
+        }
     } else if (!use_custom_mutator) {
         LOG_I("In-process protobuf mutation DISABLED by flag (honggfuzz byte-level mutation)");
     } else {
@@ -255,6 +281,7 @@ static void HonggfuzzPersistentLoop(void) {
 
         performanceCheck();
 
+        ATOMIC_SET(globalCovFeedback->postMutInputLen[my_thread_no].val, 0);
         HonggfuzzFetchData(&buf, &len);
 
         /*
@@ -283,6 +310,50 @@ static void HonggfuzzPersistentLoop(void) {
             if (len > 0)
                 ATOMIC_PRE_INC(globalCovFeedback->pidCustomMutatorSuccessesCnt[my_thread_no].val);
             buf = hf_mut_buf;
+
+            /* Write mutated data back to the shared input region so the
+               parent saves the actual crash-triggering input (post-mutation)
+               rather than the pre-mutation corpus entry. */
+            uint8_t* shared_input = fetchGetInputFile();
+            if (shared_input && len > 0) {
+                size_t wb_len = len < _HF_INPUT_MAX_SIZE ? len : _HF_INPUT_MAX_SIZE;
+                memcpy(shared_input, hf_mut_buf, wb_len);
+                ATOMIC_SET(globalCovFeedback->postMutInputLen[my_thread_no].val, wb_len);
+            }
+        }
+
+        /* Record post-mutation input and optionally do schema-aware crossover */
+        if (use_custom_mutator && LLVMFuzzerCustomCrossOver && len > 0) {
+            size_t store_len = len < _HF_INPUT_MAX_SIZE ? len : _HF_INPUT_MAX_SIZE;
+            memcpy(hf_xover_ring[hf_xover_head % HF_CROSSOVER_RING_CAP],
+                   buf, store_len);
+            hf_xover_lens[hf_xover_head % HF_CROSSOVER_RING_CAP] = store_len;
+            hf_xover_head++;
+            if (hf_xover_count < HF_CROSSOVER_RING_CAP) hf_xover_count++;
+
+            /* ~25% of iterations: pick a donor and do schema-aware crossover */
+            hf_mut_counter += 0x9e3779b9u;
+            if (hf_xover_count > 1 && (hf_mut_counter % 4) == 0) {
+                uint32_t idx = hf_mut_counter % hf_xover_count;
+                const uint8_t* donor = hf_xover_ring[idx];
+                size_t donor_len = hf_xover_lens[idx];
+                size_t new_len = LLVMFuzzerCustomCrossOver(
+                    buf, len, donor, donor_len,
+                    hf_mut_buf, _HF_INPUT_MAX_SIZE, hf_mut_counter);
+                if (new_len > 0) {
+                    len = new_len;
+                    buf = hf_mut_buf;
+
+                    /* Update shared memory with crossover result so the
+                       parent saves the actual crash-triggering input. */
+                    uint8_t* shared_input_xo = fetchGetInputFile();
+                    if (shared_input_xo) {
+                        size_t wb_len = len < _HF_INPUT_MAX_SIZE ? len : _HF_INPUT_MAX_SIZE;
+                        memcpy(shared_input_xo, hf_mut_buf, wb_len);
+                        ATOMIC_SET(globalCovFeedback->postMutInputLen[my_thread_no].val, wb_len);
+                    }
+                }
+            }
         }
 
         HonggfuzzRunOneInput(buf, len);
@@ -348,6 +419,7 @@ static int HonggfuzzRunFromDir(const char* dirpath, uint8_t* buf) {
 }
 
 static int HonggfuzzRunFromFile(int argc, char** argv) {
+    hf_replay_mode = true;
     LOG_I("🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃🔥💃");
     LOG_I("Usage for fuzzing: honggfuzz -P [flags] -- %s", argv[0]);
 

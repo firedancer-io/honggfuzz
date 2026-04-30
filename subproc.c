@@ -564,21 +564,27 @@ void subproc_checkTimeLimit(run_t* run) {
         hfuzz_metrics_log_hang(run->dynfile->size,
                                 (uint64_t)(run->global->timing.tmOut * 1000));
 
-        /* Save the timeout input as a bug artifact */
+        /* Save the timeout input as a bug artifact. Use post-mutation length
+           if custom mutation wrote back to shared memory. */
         if (run->dynfile && run->dynfile->data && run->dynfile->size > 0) {
+            size_t save_size = run->dynfile->size;
+            if (run->global->feedback.covFeedbackMap) {
+                size_t post_len = ATOMIC_GET(
+                    run->global->feedback.covFeedbackMap->postMutInputLen[run->fuzzNo].val);
+                if (post_len > 0 && post_len <= (size_t)run->global->mutate.maxInputSz) {
+                    save_size = post_len;
+                }
+            }
             char timeoutFileName[PATH_MAX];
-            uint64_t inputHash = util_hash((const char*)run->dynfile->data, run->dynfile->size);
+            uint64_t inputHash = util_hash((const char*)run->dynfile->data, save_size);
 
-            /* Use unique filename: TIMEOUT.SIZE.HASH.fuzz */
             snprintf(timeoutFileName, sizeof(timeoutFileName),
                 "%s/TIMEOUT.%zu.%" PRIx64 ".%s",
-                run->global->io.crashDir, run->dynfile->size, inputHash,
+                run->global->io.crashDir, save_size, inputHash,
                 run->global->io.fileExtn);
 
-            /* Only save if file doesn't already exist (deduplication by hash) */
             if (!files_exists(timeoutFileName)) {
-                /* Use atomic write to ensure file appears fully formed */
-                if (files_writeBufToFileAtomic(timeoutFileName, run->dynfile->data, run->dynfile->size)) {
+                if (files_writeBufToFileAtomic(timeoutFileName, run->dynfile->data, save_size)) {
                     LOG_I("Timeout: saved as '%s'", timeoutFileName);
                 } else {
                     LOG_W("Couldn't save timeout input to '%s'", timeoutFileName);
@@ -784,14 +790,22 @@ void subproc_checkRssLimit(run_t* run) {
          * Save it as an artifact for reproducibility.
          * Layers 1-2 = infrastructure pressure -- don't save. */
         if (is_hard_cap && run->dynfile && run->dynfile->data && run->dynfile->size > 0) {
+            size_t save_size = run->dynfile->size;
+            if (run->global->feedback.covFeedbackMap) {
+                size_t post_len = ATOMIC_GET(
+                    run->global->feedback.covFeedbackMap->postMutInputLen[run->fuzzNo].val);
+                if (post_len > 0 && post_len <= (size_t)run->global->mutate.maxInputSz) {
+                    save_size = post_len;
+                }
+            }
             char oomFileName[PATH_MAX];
-            uint64_t inputHash = util_hash((const char*)run->dynfile->data, run->dynfile->size);
+            uint64_t inputHash = util_hash((const char*)run->dynfile->data, save_size);
             snprintf(oomFileName, sizeof(oomFileName),
                 "%s/OOM.%zu.%" PRIx64 ".%s",
-                run->global->io.crashDir, run->dynfile->size, inputHash,
+                run->global->io.crashDir, save_size, inputHash,
                 run->global->io.fileExtn);
             if (!files_exists(oomFileName)) {
-                if (files_writeBufToFileAtomic(oomFileName, run->dynfile->data, run->dynfile->size)) {
+                if (files_writeBufToFileAtomic(oomFileName, run->dynfile->data, save_size)) {
                     LOG_I("OOM: saved triggering input as '%s'", oomFileName);
                 } else {
                     LOG_W("Couldn't save OOM input to '%s'", oomFileName);

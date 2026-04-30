@@ -262,6 +262,10 @@ typedef struct {
     cntCacheLine_t pidExecFailCnt[_HF_THREAD_MAX];
     cntCacheLine_t pidVerifyCnt[_HF_THREAD_MAX];
     cntCacheLine_t pidHarnessRejectCnt[_HF_THREAD_MAX];
+    /* Post-custom-mutation input length. Written by the persistent child after
+       in-process mutation (persistent.c) so the parent can save the actual
+       crash-triggering input rather than the pre-mutation corpus entry. */
+    sizeCacheLine_t postMutInputLen[_HF_THREAD_MAX];
 } feedback_t;
 
 typedef struct {

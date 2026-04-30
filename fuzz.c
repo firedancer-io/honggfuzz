@@ -438,7 +438,15 @@ static bool fuzz_runVerifier(run_t* run) {
     defer {
         close(fd);
     };
-    if (!files_writeToFd(fd, run->dynfile->data, run->dynfile->size)) {
+    size_t ver_size = run->dynfile->size;
+    if (run->global->feedback.covFeedbackMap) {
+        size_t post_len = ATOMIC_GET(
+            run->global->feedback.covFeedbackMap->postMutInputLen[run->fuzzNo].val);
+        if (post_len > 0 && post_len <= (size_t)run->global->mutate.maxInputSz) {
+            ver_size = post_len;
+        }
+    }
+    if (!files_writeToFd(fd, run->dynfile->data, ver_size)) {
         LOG_E("Couldn't save verified file as '%s'", verFile);
         unlink(verFile);
         return true;

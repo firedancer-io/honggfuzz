@@ -18,16 +18,20 @@
 __attribute__((visibility("default"))) __attribute__((used)) const char* LIBHFUZZ_module_fetch =
     _HF_PERSISTENT_SIG;
 
-static const uint8_t*                    inputFile = NULL;
+static uint8_t*                          inputFile = NULL;
 __attribute__((constructor)) static void init(void) {
     if (fcntl(_HF_INPUT_FD, F_GETFD) == -1 && errno == EBADF) {
         return;
     }
-    if ((inputFile = mmap(NULL, _HF_INPUT_MAX_SIZE, PROT_READ, MAP_SHARED, _HF_INPUT_FD, 0)) ==
+    if ((inputFile = mmap(NULL, _HF_INPUT_MAX_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, _HF_INPUT_FD, 0)) ==
         MAP_FAILED) {
         PLOG_F("mmap(fd=%d, size=%zu) of the input file failed", _HF_INPUT_FD,
             (size_t)_HF_INPUT_MAX_SIZE);
     }
+}
+
+uint8_t* fetchGetInputFile(void) {
+    return inputFile;
 }
 
 /*

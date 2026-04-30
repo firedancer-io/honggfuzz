@@ -20,7 +20,7 @@ static std::string sanitize_kind_col(const char* raw_name) {
         char c = *p;
         if (c >= 'A' && c <= 'Z') {
             if (!safe.empty() && safe.back() != '_') safe += '_';
-            safe += (char)(c + ('a' - 'A'));
+            safe += static_cast<char>(c + ('a' - 'A'));
         } else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
             safe += c;
         }

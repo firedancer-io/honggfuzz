@@ -119,6 +119,7 @@ __attribute__((weak)) size_t LLVMFuzzerCustomCrossOver(
 bool hf_replay_mode = false;
 
 static uint8_t  hf_mut_buf[_HF_INPUT_MAX_SIZE];
+static uint8_t  hf_xover_buf[_HF_INPUT_MAX_SIZE];
 static uint32_t hf_mut_counter = 0;
 
 #define HF_CROSSOVER_RING_CAP 16
@@ -305,8 +306,10 @@ static void HonggfuzzPersistentLoop(void) {
             memcpy(hf_mut_buf, buf, copy_len);
             hf_mut_counter += 0x9e3779b9u;
             ATOMIC_PRE_INC(globalCovFeedback->pidCustomMutatorCallsCnt[my_thread_no].val);
+            size_t mut_max = fetchGetInputFileSize();
+            if (mut_max == 0 || mut_max > _HF_INPUT_MAX_SIZE) mut_max = _HF_INPUT_MAX_SIZE;
             len = LLVMFuzzerCustomMutator(
-                hf_mut_buf, copy_len, _HF_INPUT_MAX_SIZE, hf_mut_counter);
+                hf_mut_buf, copy_len, mut_max, hf_mut_counter);
             if (len > 0)
                 ATOMIC_PRE_INC(globalCovFeedback->pidCustomMutatorSuccessesCnt[my_thread_no].val);
             buf = hf_mut_buf;
@@ -316,8 +319,9 @@ static void HonggfuzzPersistentLoop(void) {
                rather than the pre-mutation corpus entry. */
             uint8_t* shared_input = fetchGetInputFile();
             if (shared_input && len > 0) {
-                size_t wb_len = len < _HF_INPUT_MAX_SIZE ? len : _HF_INPUT_MAX_SIZE;
+                size_t wb_len = len < mut_max ? len : mut_max;
                 memcpy(shared_input, hf_mut_buf, wb_len);
+                fetchSanPoison(shared_input, wb_len);
                 ATOMIC_SET(globalCovFeedback->postMutInputLen[my_thread_no].val, wb_len);
             }
         }
@@ -337,19 +341,23 @@ static void HonggfuzzPersistentLoop(void) {
                 uint32_t idx = hf_mut_counter % hf_xover_count;
                 const uint8_t* donor = hf_xover_ring[idx];
                 size_t donor_len = hf_xover_lens[idx];
+                size_t xo_max = fetchGetInputFileSize();
+                if (xo_max == 0 || xo_max > _HF_INPUT_MAX_SIZE) xo_max = _HF_INPUT_MAX_SIZE;
                 size_t new_len = LLVMFuzzerCustomCrossOver(
                     buf, len, donor, donor_len,
-                    hf_mut_buf, _HF_INPUT_MAX_SIZE, hf_mut_counter);
+                    hf_xover_buf, xo_max, hf_mut_counter);
                 if (new_len > 0) {
                     len = new_len;
+                    memcpy(hf_mut_buf, hf_xover_buf, len);
                     buf = hf_mut_buf;
 
                     /* Update shared memory with crossover result so the
                        parent saves the actual crash-triggering input. */
                     uint8_t* shared_input_xo = fetchGetInputFile();
                     if (shared_input_xo) {
-                        size_t wb_len = len < _HF_INPUT_MAX_SIZE ? len : _HF_INPUT_MAX_SIZE;
+                        size_t wb_len = len < xo_max ? len : xo_max;
                         memcpy(shared_input_xo, hf_mut_buf, wb_len);
+                        fetchSanPoison(shared_input_xo, wb_len);
                         ATOMIC_SET(globalCovFeedback->postMutInputLen[my_thread_no].val, wb_len);
                     }
                 }

@@ -27,7 +27,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define INPUT_MAX_SIZE (1 << 20) /* 1 MB, matches _HF_INPUT_MAX_SIZE */
+#define INPUT_MAX_SIZE (1 << 20) /* 1 MB (smaller than production _HF_INPUT_MAX_SIZE for test speed) */
 
 /* Minimal reproduction of the shared feedback field.
    In production this is sizeCacheLine_t inside feedback_t. */

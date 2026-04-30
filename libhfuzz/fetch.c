@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "honggfuzz.h"
@@ -18,15 +19,24 @@
 __attribute__((visibility("default"))) __attribute__((used)) const char* LIBHFUZZ_module_fetch =
     _HF_PERSISTENT_SIG;
 
-static uint8_t*                          inputFile = NULL;
+static uint8_t* inputFile     = NULL;
+static size_t   inputFileSize = 0;
+
 __attribute__((constructor)) static void init(void) {
     if (fcntl(_HF_INPUT_FD, F_GETFD) == -1 && errno == EBADF) {
         return;
     }
-    if ((inputFile = mmap(NULL, _HF_INPUT_MAX_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, _HF_INPUT_FD, 0)) ==
+
+    struct stat st;
+    if (fstat(_HF_INPUT_FD, &st) == -1) {
+        PLOG_F("fstat(fd=%d) of the input file failed", _HF_INPUT_FD);
+    }
+    inputFileSize = (size_t)st.st_size;
+
+    size_t map_size = inputFileSize > 0 ? inputFileSize : _HF_INPUT_MAX_SIZE;
+    if ((inputFile = mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, _HF_INPUT_FD, 0)) ==
         MAP_FAILED) {
-        PLOG_F("mmap(fd=%d, size=%zu) of the input file failed", _HF_INPUT_FD,
-            (size_t)_HF_INPUT_MAX_SIZE);
+        PLOG_F("mmap(fd=%d, size=%zu) of the input file failed", _HF_INPUT_FD, map_size);
     }
 }
 
@@ -34,11 +44,15 @@ uint8_t* fetchGetInputFile(void) {
     return inputFile;
 }
 
+size_t fetchGetInputFileSize(void) {
+    return inputFileSize;
+}
+
 /*
  * Instruct *SAN to treat the input buffer to be of a specific size, treating all accesses
  * beyond that as access violations
  */
-static void fetchSanPoison(const uint8_t* buf, size_t len) {
+void fetchSanPoison(const uint8_t* buf, size_t len) {
 /* MacOS X linker doesn't like those */
 #if defined(_HF_ARCH_DARWIN) || defined(__APPLE__)
     return;

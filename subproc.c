@@ -284,8 +284,15 @@ static bool subproc_PrepareExecv(run_t* run) {
     } else {
         setenv("HFUZZ_USE_CUSTOM_MUTATOR", "0", 1);
     }
-    if (!run->global->exe.useCrossover) {
+    if (run->global->exe.useCrossover) {
+        setenv("HFUZZ_USE_CROSSOVER", "1", 1);
+    } else {
         setenv("HFUZZ_USE_CROSSOVER", "0", 1);
+    }
+    if (run->global->exe.persistent && run->global->exe.useCustomMutator) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%zu", run->global->mutate.maxInputSz);
+        setenv("HFUZZ_MAX_INPUT_SZ", buf, 1);
     }
     if (run->global->exe.netDriver) {
         setenv(_HF_THREAD_NETDRIVER_ENV, "1", 1);

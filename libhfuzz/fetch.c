@@ -41,13 +41,15 @@ __attribute__((constructor)) static void init(void) {
         PLOG_F("mmap(fd=%d, size=%zu) of the input file failed", _HF_INPUT_FD, map_size);
     }
 
-    /* When persistent+custom-mutator is active, parent allocates 2 * maxInputSz:
-       first half = primary input, second half = crossover donor.
-       Detect by checking if totalSize exceeds the single-region maximum. */
-    if (totalSize > _HF_INPUT_MAX_SIZE) {
-        inputFileSize = totalSize / 2;
+    /* When persistent+custom-mutator is active, parent sets HFUZZ_MAX_INPUT_SZ
+       and allocates 2 * maxInputSz: first half = primary, second half = donor. */
+    const char* maxSzEnv = getenv("HFUZZ_MAX_INPUT_SZ");
+    if (maxSzEnv) {
+        inputFileSize = (size_t)strtoull(maxSzEnv, NULL, 10);
         if (inputFileSize > _HF_INPUT_MAX_SIZE) inputFileSize = _HF_INPUT_MAX_SIZE;
-        donorBuf = inputFile + inputFileSize;
+        if (inputFileSize > 0 && totalSize >= inputFileSize * 2) {
+            donorBuf = inputFile + inputFileSize;
+        }
     } else {
         inputFileSize = totalSize;
         if (inputFileSize > _HF_INPUT_MAX_SIZE) inputFileSize = _HF_INPUT_MAX_SIZE;

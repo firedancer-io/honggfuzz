@@ -525,6 +525,7 @@ typedef struct {
     dynfile_t*   current;
     hwcnt_t      hwCnts;
     uint8_t      mutationTiers; /* Bitmap of mutation tiers used this run */
+    size_t       donorSize;     /* Size of crossover donor written to second half of mmap */
 
     /* Deferred metrics snapshot: filled under dynfileq rwlock,
        flushed after release to avoid blocking all fuzzer threads on

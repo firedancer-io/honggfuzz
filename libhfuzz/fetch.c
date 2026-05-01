@@ -21,6 +21,8 @@ __attribute__((visibility("default"))) __attribute__((used)) const char* LIBHFUZ
 
 static uint8_t* inputFile     = NULL;
 static size_t   inputFileSize = 0;
+static uint8_t* donorBuf      = NULL;
+static size_t   donorLen      = 0;
 
 __attribute__((constructor)) static void init(void) {
     if (fcntl(_HF_INPUT_FD, F_GETFD) == -1 && errno == EBADF) {
@@ -31,21 +33,27 @@ __attribute__((constructor)) static void init(void) {
     if (fstat(_HF_INPUT_FD, &st) == -1) {
         PLOG_F("fstat(fd=%d) of the input file failed", _HF_INPUT_FD);
     }
-    inputFileSize = (size_t)st.st_size;
-    if (inputFileSize > _HF_INPUT_MAX_SIZE) inputFileSize = _HF_INPUT_MAX_SIZE;
 
-    size_t map_size = inputFileSize > 0 ? inputFileSize : _HF_INPUT_MAX_SIZE;
+    size_t totalSize = (size_t)st.st_size;
+    size_t map_size  = totalSize > 0 ? totalSize : _HF_INPUT_MAX_SIZE;
     if ((inputFile = mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, _HF_INPUT_FD, 0)) ==
         MAP_FAILED) {
         PLOG_F("mmap(fd=%d, size=%zu) of the input file failed", _HF_INPUT_FD, map_size);
     }
+
+    /* Parent allocates 2 * maxInputSz: first half = primary, second half = donor */
+    inputFileSize = totalSize / 2;
+    if (inputFileSize > _HF_INPUT_MAX_SIZE) inputFileSize = _HF_INPUT_MAX_SIZE;
+    if (inputFileSize > 0) {
+        donorBuf = inputFile + inputFileSize;
+    }
 }
 
-uint8_t* fetchGetInputFile(void) {
+uint8_t* getInputBuf(void) {
     return inputFile;
 }
 
-size_t fetchGetInputFileSize(void) {
+size_t getInputMaxSize(void) {
     return inputFileSize;
 }
 
@@ -89,25 +97,35 @@ void HonggfuzzFetchData(const uint8_t** buf_ptr, size_t* len_ptr) {
         LOG_F("writeToFd(size=%zu, readyTag) failed", sizeof(HFReadyTag));
     }
 
-    uint64_t rcvLen;
-    ssize_t  sz = files_readFromFd(_HF_PERSISTENT_FD, (uint8_t*)&rcvLen, sizeof(rcvLen));
+    uint64_t rcvLens[2];
+    ssize_t  sz = files_readFromFd(_HF_PERSISTENT_FD, (uint8_t*)rcvLens, sizeof(rcvLens));
     if (sz == -1) {
-        PLOG_F("readFromFd(fd=%d, size=%zu) failed", _HF_PERSISTENT_FD, sizeof(rcvLen));
+        PLOG_F("readFromFd(fd=%d, size=%zu) failed", _HF_PERSISTENT_FD, sizeof(rcvLens));
     }
-    if (sz != sizeof(rcvLen)) {
-        LOG_F("readFromFd(fd=%d, size=%zu) failed, received=%zd bytes", _HF_PERSISTENT_FD,
-            sizeof(rcvLen), sz);
+    if (sz != (ssize_t)sizeof(rcvLens)) {
+        LOG_F("Protocol mismatch: expected %zu bytes, received %zd. "
+              "Rebuild both honggfuzz and solfuzz.",
+            sizeof(rcvLens), sz);
     }
 
     *buf_ptr = inputFile;
     size_t mapped = inputFileSize > 0 ? inputFileSize : _HF_INPUT_MAX_SIZE;
-    *len_ptr = (size_t)rcvLen > mapped ? mapped : (size_t)rcvLen;
+    *len_ptr = (size_t)rcvLens[0] > mapped ? mapped : (size_t)rcvLens[0];
+    donorLen = (size_t)rcvLens[1] > mapped ? mapped : (size_t)rcvLens[1];
 
     fetchSanPoison(inputFile, *len_ptr);
 
     if (lseek(_HF_INPUT_FD, (off_t)0, SEEK_SET) == -1) {
         PLOG_W("lseek(_HF_INPUT_FD=%d, 0)", _HF_INPUT_FD);
     }
+}
+
+uint8_t* getDonorBuf(void) {
+    return donorBuf;
+}
+
+size_t getDonorLen(void) {
+    return donorLen;
 }
 
 bool fetchIsInputAvailable(void) {

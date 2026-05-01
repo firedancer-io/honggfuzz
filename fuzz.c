@@ -628,7 +628,8 @@ static bool fuzz_fetchInput(run_t* run) {
     }
 
     /* Donor must be written before subproc_Run sends the size indicator */
-    if (run->global->exe.persistent && run->global->exe.useCustomMutator) {
+    if (run->global->exe.persistent && run->global->exe.useCustomMutator
+        && run->global->exe.useCrossover) {
         input_prepareDonorInput(run);
     }
 
@@ -779,7 +780,7 @@ static void* fuzz_threadNew(void* arg) {
     snprintf(mapname, sizeof(mapname), "hf-%u-input", fuzzNo);
     if (!hfuzz->socketFuzzer.enabled) {
         size_t mmapSz = hfuzz->mutate.maxInputSz;
-        if (hfuzz->exe.persistent && hfuzz->exe.useCustomMutator) {
+        if (hfuzz->exe.persistent && hfuzz->exe.useCustomMutator && hfuzz->exe.useCrossover) {
             mmapSz *= 2;
         }
         if (!(run.dynfile->data = files_mapSharedMem(mmapSz, &(run.dynfile->fd),

@@ -298,6 +298,7 @@ static void HonggfuzzPersistentLoop(void) {
 
         HonggfuzzFetchData(&buf, &len);
         ATOMIC_SET(globalCovFeedback->postMutInputLen[my_thread_no].val, 0);
+        hf_mut_counter += 0x9e3779b9u;
 
         /*
          * Apply structure-aware in-process mutation via LLVMFuzzerCustomMutator
@@ -318,7 +319,6 @@ static void HonggfuzzPersistentLoop(void) {
                 ATOMIC_PRE_INC(globalCovFeedback->pidInputsTruncatedCnt[my_thread_no].val);
             }
             memcpy(hf_mut_buf, buf, copy_len);
-            hf_mut_counter += 0x9e3779b9u;
             ATOMIC_PRE_INC(globalCovFeedback->pidCustomMutatorCallsCnt[my_thread_no].val);
             size_t mut_max = getInputMaxSize();
             if (mut_max == 0 || mut_max > _HF_INPUT_MAX_SIZE) mut_max = _HF_INPUT_MAX_SIZE;

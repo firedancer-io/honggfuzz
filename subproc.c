@@ -289,7 +289,8 @@ static bool subproc_PrepareExecv(run_t* run) {
     } else {
         setenv("HFUZZ_USE_CROSSOVER", "0", 1);
     }
-    if (run->global->exe.persistent && run->global->exe.useCustomMutator) {
+    if (run->global->exe.persistent && run->global->exe.useCustomMutator
+        && run->global->exe.useCrossover) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%zu", run->global->mutate.maxInputSz);
         setenv("HFUZZ_MAX_INPUT_SZ", buf, 1);

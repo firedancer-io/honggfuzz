@@ -354,7 +354,7 @@ bool cmdlineParse(int argc, char* argv[], honggfuzz_t* hfuzz) {
                 .feedbackMutateCommand = NULL,
                 .persistent            = false,
                 .useCustomMutator      = true,
-                .useCrossover          = true,
+                .useCrossover          = false,
                 .netDriver             = false,
                 .asLimit               = 0U,
                 .rssLimit              = 0U,
@@ -550,7 +550,7 @@ bool cmdlineParse(int argc, char* argv[], honggfuzz_t* hfuzz) {
         { { "statsfile", required_argument, NULL, 0x116 }, "Stats file" },
         { { "custom-mutator", no_argument, NULL, 0x130 }, "Enable in-process LLVMFuzzerCustomMutator for structure-aware mutation (default: enabled)" },
         { { "no-custom-mutator", no_argument, NULL, 0x131 }, "Disable in-process LLVMFuzzerCustomMutator; use honggfuzz byte-level mutation instead" },
-        { { "crossover", no_argument, NULL, 0x132 }, "Enable in-process LLVMFuzzerCustomCrossOver (default: enabled)" },
+        { { "crossover", no_argument, NULL, 0x132 }, "Enable in-process LLVMFuzzerCustomCrossOver (default: disabled)" },
         { { "no-crossover", no_argument, NULL, 0x133 }, "Disable in-process LLVMFuzzerCustomCrossOver" },
 
 #if defined(_HF_ARCH_LINUX)

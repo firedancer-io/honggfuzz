@@ -662,7 +662,7 @@ int main(void) {
 
     test_coverage_save_uses_postmut_size(path);
     test_coverage_save_handles_size_increase();
-    test_crossover_fires_at_25_percent();
+    test_crossover_fires_at_configured_rate();
     test_donor_from_mmap();
     test_protocol_size_mismatch();
     test_postmutlen_visible_to_parent();

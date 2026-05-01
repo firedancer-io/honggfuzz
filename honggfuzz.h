@@ -331,6 +331,7 @@ typedef struct {
         bool               netDriver;
         bool               persistent;
         bool               useCustomMutator;
+        bool               useCrossover;
         uint64_t           asLimit;
         uint64_t           rssLimit;
         uint64_t           dataLimit;

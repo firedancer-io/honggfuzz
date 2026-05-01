@@ -284,6 +284,9 @@ static bool subproc_PrepareExecv(run_t* run) {
     } else {
         setenv("HFUZZ_USE_CUSTOM_MUTATOR", "0", 1);
     }
+    if (!run->global->exe.useCrossover) {
+        setenv("HFUZZ_USE_CROSSOVER", "0", 1);
+    }
     if (run->global->exe.netDriver) {
         setenv(_HF_THREAD_NETDRIVER_ENV, "1", 1);
     }

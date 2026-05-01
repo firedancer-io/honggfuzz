@@ -41,11 +41,16 @@ __attribute__((constructor)) static void init(void) {
         PLOG_F("mmap(fd=%d, size=%zu) of the input file failed", _HF_INPUT_FD, map_size);
     }
 
-    /* Parent allocates 2 * maxInputSz: first half = primary, second half = donor */
-    inputFileSize = totalSize / 2;
-    if (inputFileSize > _HF_INPUT_MAX_SIZE) inputFileSize = _HF_INPUT_MAX_SIZE;
-    if (inputFileSize > 0) {
+    /* When persistent+custom-mutator is active, parent allocates 2 * maxInputSz:
+       first half = primary input, second half = crossover donor.
+       Detect by checking if totalSize exceeds the single-region maximum. */
+    if (totalSize > _HF_INPUT_MAX_SIZE) {
+        inputFileSize = totalSize / 2;
+        if (inputFileSize > _HF_INPUT_MAX_SIZE) inputFileSize = _HF_INPUT_MAX_SIZE;
         donorBuf = inputFile + inputFileSize;
+    } else {
+        inputFileSize = totalSize;
+        if (inputFileSize > _HF_INPUT_MAX_SIZE) inputFileSize = _HF_INPUT_MAX_SIZE;
     }
 }
 
@@ -114,6 +119,9 @@ void HonggfuzzFetchData(const uint8_t** buf_ptr, size_t* len_ptr) {
     donorLen = (size_t)rcvLens[1] > mapped ? mapped : (size_t)rcvLens[1];
 
     fetchSanPoison(inputFile, *len_ptr);
+    if (donorBuf && donorLen > 0) {
+        fetchSanPoison(donorBuf, donorLen);
+    }
 
     if (lseek(_HF_INPUT_FD, (off_t)0, SEEK_SET) == -1) {
         PLOG_W("lseek(_HF_INPUT_FD=%d, 0)", _HF_INPUT_FD);

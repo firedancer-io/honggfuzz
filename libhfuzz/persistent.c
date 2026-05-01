@@ -253,12 +253,29 @@ static void HonggfuzzPersistentLoop(void) {
      */
     bool use_custom_mutator = true;
     bool use_crossover      = true;
+    unsigned int crossover_pct = 25;
 
     const char *cm_env = getenv("HFUZZ_USE_CUSTOM_MUTATOR");
     if (cm_env && (cm_env[0] == '0' || cm_env[0] == 'n' || cm_env[0] == 'N')) {
         use_custom_mutator = false;
         use_crossover      = false;
         LOG_I("HFUZZ_USE_CUSTOM_MUTATOR=0: in-process custom mutation DISABLED (byte-level only)");
+    }
+
+    const char *xo_env = getenv("HFUZZ_USE_CROSSOVER");
+    if (xo_env && (xo_env[0] == '0' || xo_env[0] == 'n' || xo_env[0] == 'N')) {
+        use_crossover = false;
+        LOG_I("HFUZZ_USE_CROSSOVER=0: in-process protobuf crossover DISABLED");
+    }
+
+    const char *xo_pct_env = getenv("HFUZZ_CROSSOVER_PCT");
+    if (xo_pct_env) {
+        unsigned long pct = strtoul(xo_pct_env, NULL, 10);
+        if (pct <= 100) {
+            crossover_pct = (unsigned int)pct;
+            LOG_I("HFUZZ_CROSSOVER_PCT=%u: crossover fires %u%% of iterations",
+                crossover_pct, crossover_pct);
+        }
     }
 
     if (use_custom_mutator && LLVMFuzzerCustomMutator) {
@@ -269,7 +286,8 @@ static void HonggfuzzPersistentLoop(void) {
         LOG_W("LLVMFuzzerCustomMutator not linked -- using raw byte-level mutation only");
     }
     if (use_crossover && LLVMFuzzerCustomCrossOver) {
-        LOG_I("In-process protobuf crossover ENABLED (LLVMFuzzerCustomCrossOver linked)");
+        LOG_I("In-process protobuf crossover ENABLED at %u%% (LLVMFuzzerCustomCrossOver linked)",
+            crossover_pct);
     }
 
     for (;;) {
@@ -323,9 +341,9 @@ static void HonggfuzzPersistentLoop(void) {
             }
         }
 
-        /* ~25% of iterations: schema-aware crossover with parent-provided donor */
+        /* Schema-aware crossover with parent-provided donor (configurable rate) */
         if (use_crossover && LLVMFuzzerCustomCrossOver && len > 0
-            && (hf_mut_counter % 4) == 0) {
+            && (hf_mut_counter % 100) < crossover_pct) {
             uint8_t* donor     = getDonorBuf();
             size_t   donor_len = getDonorLen();
             if (donor && donor_len > 0) {

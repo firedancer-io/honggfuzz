@@ -778,7 +778,10 @@ static void* fuzz_threadNew(void* arg) {
     char mapname[32];
     snprintf(mapname, sizeof(mapname), "hf-%u-input", fuzzNo);
     if (!hfuzz->socketFuzzer.enabled) {
-        size_t mmapSz = hfuzz->mutate.maxInputSz * 2;
+        size_t mmapSz = hfuzz->mutate.maxInputSz;
+        if (hfuzz->exe.persistent && hfuzz->exe.useCustomMutator) {
+            mmapSz *= 2;
+        }
         if (!(run.dynfile->data = files_mapSharedMem(mmapSz, &(run.dynfile->fd),
                   mapname, /* nocore= */ true, /* exportmap= */ false))) {
             LOG_F("Couldn't create an input file of size: %zu, name:'%s'", mmapSz, mapname);

@@ -111,7 +111,7 @@ void HonggfuzzFetchData(const uint8_t** buf_ptr, size_t* len_ptr) {
     }
     if (sz != (ssize_t)sizeof(rcvLens)) {
         LOG_F("Protocol mismatch: expected %zu bytes, received %zd. "
-              "Rebuild both honggfuzz and solfuzz.",
+              "Rebuild both honggfuzz and the fuzz harness.",
             sizeof(rcvLens), sz);
     }
 

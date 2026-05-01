@@ -214,37 +214,53 @@ static void test_coverage_save_handles_size_increase(void) {
 }
 
 /* -----------------------------------------------------------------------
-   Test 3: hf_mut_counter increment fires crossover at ~25% rate.
+   Test 3: hf_mut_counter increment fires crossover at the configured
+   percentage.  Production uses (counter % 100) < crossover_pct.
    ----------------------------------------------------------------------- */
-static void test_crossover_fires_at_25_percent(void) {
-    printf("TEST 3: crossover gate fires at 25%% with single increment ... ");
+static void test_crossover_fires_at_configured_rate(void) {
+    printf("TEST 3: crossover gate fires at configured rate ... ");
 
     const uint32_t GOLDEN = 0x9e3779b9u;
-    const int ITERATIONS = 10000;
-    int crossover_count = 0;
-    uint32_t counter = 0;
+    const int ITERATIONS = 100000;
 
+    /* Test default 25% */
+    int count_25 = 0;
+    uint32_t counter = 0;
     for (int i = 0; i < ITERATIONS; i++) {
         counter += GOLDEN;
-        if ((counter % 4) == 0) {
-            crossover_count++;
+        if ((counter % 100) < 25) {
+            count_25++;
         }
     }
+    double rate_25 = (double)count_25 / ITERATIONS;
+    assert(rate_25 > 0.24 && rate_25 < 0.26);
 
-    assert(crossover_count == ITERATIONS / 4);
-
-    int double_inc_count = 0;
+    /* Test 10% */
+    int count_10 = 0;
     counter = 0;
     for (int i = 0; i < ITERATIONS; i++) {
         counter += GOLDEN;
-        counter += GOLDEN; /* BUG: second increment */
-        if ((counter % 4) == 0) {
-            double_inc_count++;
+        if ((counter % 100) < 10) {
+            count_10++;
         }
     }
-    assert(double_inc_count == ITERATIONS / 2);
+    double rate_10 = (double)count_10 / ITERATIONS;
+    assert(rate_10 > 0.09 && rate_10 < 0.11);
 
-    printf("PASS (single=25%%, double=50%%)\n");
+    /* Test 50% */
+    int count_50 = 0;
+    counter = 0;
+    for (int i = 0; i < ITERATIONS; i++) {
+        counter += GOLDEN;
+        if ((counter % 100) < 50) {
+            count_50++;
+        }
+    }
+    double rate_50 = (double)count_50 / ITERATIONS;
+    assert(rate_50 > 0.49 && rate_50 < 0.51);
+
+    printf("PASS (25%%=%.1f%%, 10%%=%.1f%%, 50%%=%.1f%%)\n",
+           rate_25 * 100, rate_10 * 100, rate_50 * 100);
 }
 
 /* -----------------------------------------------------------------------

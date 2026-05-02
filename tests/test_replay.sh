@@ -76,7 +76,8 @@ if [ "$REPLAY_EXIT" -eq 124 ] || [ "$REPLAY_EXIT" -eq 137 ]; then
     echo -e "${RED}   [FAIL] honggfuzz timed out (exit $REPLAY_EXIT)${NC}"
     ERRORS=$((ERRORS + 1))
 elif [ "$REPLAY_EXIT" -ne 0 ]; then
-    echo -e "${YELLOW}   [WARN] honggfuzz exited with code $REPLAY_EXIT${NC}"
+    echo -e "${RED}   [FAIL] honggfuzz exited with code $REPLAY_EXIT${NC}"
+    ERRORS=$((ERRORS + 1))
 fi
 
 echo ""

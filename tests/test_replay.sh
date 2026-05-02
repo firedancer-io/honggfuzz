@@ -187,7 +187,8 @@ else
     echo -e "${RED}$ERRORS check(s) failed. Review the log above.${NC}"
     echo ""
     echo "Full log: $TEST_DIR/replay.log"
-    # Don't clean up on failure so user can inspect
+    echo "Test dir preserved: $TEST_DIR"
+    rm -f tests/test_target
     trap - EXIT
     exit 1
 fi

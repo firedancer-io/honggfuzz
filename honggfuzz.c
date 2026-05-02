@@ -802,12 +802,10 @@ int main(int argc, char** argv) {
                 coverage_path[0] ? coverage_path : NULL);
         }
 
-        /* Finalize coverage_data.bin header with actual guard_count and file_count */
         if (hfuzz.coverageData.fd >= 0) {
-            uint64_t guardNbFinal = ATOMIC_GET(hfuzz.feedback.covFeedbackMap->guardNb);
-            uint64_t fileCntFinal = (uint64_t)hfuzz.coverageData.entryCnt;
-            if (TEMP_FAILURE_RETRY(pwrite(hfuzz.coverageData.fd, &guardNbFinal, 8, 8)) != 8 ||
-                TEMP_FAILURE_RETRY(pwrite(hfuzz.coverageData.fd, &fileCntFinal, 8, 16)) != 8) {
+            uint64_t guardNbFinal = atomic_load_explicit(&hfuzz.feedback.covFeedbackMap->guardNb, memory_order_relaxed);
+            uint64_t fileCntFinal = (uint64_t)ATOMIC_GET(hfuzz.coverageData.entryCnt);
+            if (!fuzz_coverageDataFinalizeHeader(hfuzz.coverageData.fd, guardNbFinal, fileCntFinal)) {
                 PLOG_W("Failed to finalize coverage_data.bin header");
             }
             close(hfuzz.coverageData.fd);
@@ -823,55 +821,13 @@ int main(int argc, char** argv) {
                 LOG_E("coverage_required.json path too long (covDirNew='%s')", hfuzz.io.covDirNew);
             } else {
                 size_t cnt = ATOMIC_GET(hfuzz.coverageRequired.requiredFileCnt);
-                int rc = -1;
-                if (hfuzz_write_coverage_required_json) {
-                    rc = hfuzz_write_coverage_required_json(
-                        req_path, (const char* const*)hfuzz.coverageRequired.requiredFiles, cnt);
-                }
-                if (rc != 0) {
-                    char tmp_path[PATH_MAX];
-                    n = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%d", req_path, (int)getpid());
-                    if (n < 0 || (size_t)n >= sizeof(tmp_path)) {
-                        LOG_E("tmp_path too long for coverage_required.json");
-                    } else {
-                        FILE* fp = fopen(tmp_path, "w");
-                        if (!fp) {
-                            PLOG_E("fopen('%s') failed", tmp_path);
-                        } else {
-                            fprintf(fp, "{\"coverage_required_files\":[");
-                            bool first = true;
-                            for (size_t i = 0; i < cnt; i++) {
-                                const char* s = hfuzz.coverageRequired.requiredFiles[i];
-                                if (!s) continue;
-                                fprintf(fp, "%s\"", first ? "" : ",");
-                                first = false;
-                                for (; *s; s++) {
-                                    unsigned char c = (unsigned char)*s;
-                                    if (c == '"' || c == '\\') {
-                                        fputc('\\', fp);
-                                        fputc(c, fp);
-                                    } else if (c < 0x20) {
-                                        fprintf(fp, "\\u%04x", c);
-                                    } else {
-                                        fputc(c, fp);
-                                    }
-                                }
-                                fputc('"', fp);
-                            }
-                            fprintf(fp, "]}\n");
-                            if (fflush(fp) != 0 || fclose(fp) != 0) {
-                                PLOG_W("Failed to flush/close '%s'", tmp_path);
-                                unlink(tmp_path);
-                            } else if (rename(tmp_path, req_path) != 0) {
-                                PLOG_W("rename('%s', '%s') failed", tmp_path, req_path);
-                                unlink(tmp_path);
-                            } else {
-                                rc = 0;
-                            }
-                        }
-                    }
-                }
-                if (rc == 0) {
+                if (!hfuzz_write_coverage_required_json) {
+                    LOG_E("coverage_required.json writer not linked (missing RapidJSON?)");
+                } else if (hfuzz_write_coverage_required_json(
+                               req_path, (const char* const*)hfuzz.coverageRequired.requiredFiles,
+                               cnt) != 0) {
+                    LOG_E("Failed to write coverage_required.json");
+                } else {
                     LOG_I("Wrote %zu coverage-required files to %s", cnt, req_path);
                 }
             }

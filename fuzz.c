@@ -37,6 +37,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -646,78 +647,50 @@ static bool fuzz_fetchInput(run_t* run) {
     return true;
 }
 
-static void fuzz_replayCoverageCheck(run_t* run) {
-    honggfuzz_t* hfuzz = run->global;
-    uint8_t* localMap = run->perThreadCovFeedbackMap;
-    uint64_t guardNb  = ATOMIC_GET(hfuzz->feedback.covFeedbackMap->guardNb);
+/*
+ * coverage_data.bin - per-file guard coverage for greedy set-cover minimization
+ *
+ * All multi-byte integers are little-endian (native x86-64).
+ *
+ * Header (24 bytes):
+ *   [0..4)   u8[4]   magic   "COVD" (0x43 0x4F 0x56 0x44)
+ *   [4..8)   u32     version (currently 1)
+ *   [8..16)  u64     guard_count: total instrumentation guards in the binary
+ *   [16..24) u64     file_count:  number of entry records that follow
+ *
+ * guard_count and file_count are written as zero initially and backfilled
+ * via pwrite() after all entries have been streamed.
+ *
+ * Entry (repeated file_count times):
+ *   u16      filename_len
+ *   u8[]     filename      (filename_len bytes, no NUL terminator)
+ *   u32      hit_count:     number of distinct guard IDs hit by this file
+ *   u32[]    guard_ids     (hit_count elements, each a guard index in [0, guard_count))
+ */
 
-    /* Lazy-init the covered bitmap at _HF_PC_GUARD_MAX (one-shot, never
-       resized).  calloc on Linux uses demand-paging — only touched pages
-       consume physical memory, so the virtual reservation is cheap. */
-    uint8_t* covGuards = (uint8_t*)ATOMIC_GET(hfuzz->coverageRequired.coveredGuards);
-    if (!covGuards) {
-        if (guardNb == 0) return;
-        MX_SCOPED_LOCK(&hfuzz->coverageRequired.requiredFilesMutex);
-        covGuards = (uint8_t*)ATOMIC_GET(hfuzz->coverageRequired.coveredGuards);
-        if (!covGuards) {
-            covGuards = calloc(_HF_PC_GUARD_MAX, 1);
-            if (!covGuards) {
-                LOG_E("calloc(coveredGuards, %zu) failed", (size_t)_HF_PC_GUARD_MAX);
-                return;
-            }
-            ATOMIC_SET(hfuzz->coverageRequired.coveredGuards, covGuards);
-            LOG_I("Allocated covered-guards bitmap (%zu virtual bytes)", (size_t)_HF_PC_GUARD_MAX);
-        }
-    }
+static bool fuzz_coverageDataWriteHeader(int fd) {
+    const uint8_t magic[4] = { 'C', 'O', 'V', 'D' };
+    uint32_t      version  = 1;
+    uint64_t      zero     = 0;
+    return files_writeToFd(fd, magic, sizeof(magic))
+        && files_writeToFd(fd, (const uint8_t*)&version, 4)
+        && files_writeToFd(fd, (const uint8_t*)&zero, 8)
+        && files_writeToFd(fd, (const uint8_t*)&zero, 8);
+}
 
+bool fuzz_coverageDataFinalizeHeader(int fd, uint64_t guardCount, uint64_t fileCount) {
+    return TEMP_FAILURE_RETRY(pwrite(fd, &guardCount, 8, 8)) == 8
+        && TEMP_FAILURE_RETRY(pwrite(fd, &fileCount, 8, 16)) == 8;
+}
+
+static void fuzz_coverageDataAppendEntry(
+        honggfuzz_t* hfuzz, const uint8_t* localMap, uint64_t guardNb, const char* base) {
+    if (hfuzz->coverageData.fd < 0) return;
     if (guardNb > _HF_PC_GUARD_MAX) guardNb = _HF_PC_GUARD_MAX;
 
-    bool hasNew = false;
-    for (uint64_t i = 0; i < guardNb; i++) {
-        if (localMap[i] && !ATOMIC_GET(covGuards[i]) && ATOMIC_XCHG(covGuards[i], 1) == 0) {
-            hasNew = true;
-        }
-    }
-
-    /* Use basename — honggfuzz corpora are flat directories, no nested paths. */
-    const char* fname = run->dynfile->path;
-    const char* base = strrchr(fname, '/');
-    base = base ? base + 1 : fname;
-
-    /* First-touch set cover (backwards-compat coverage_required.json) */
-    if (hasNew) {
-        char* dup = strdup(base);
-        if (!dup) {
-            LOG_E("strdup('%s') failed", base);
-        } else {
-            MX_SCOPED_LOCK(&hfuzz->coverageRequired.requiredFilesMutex);
-            size_t idx = ATOMIC_GET(hfuzz->coverageRequired.requiredFileCnt);
-            if (idx >= hfuzz->coverageRequired.requiredFilesCap) {
-                size_t newCap = hfuzz->coverageRequired.requiredFilesCap * 2;
-                if (newCap < 1024) newCap = 1024;
-                char** p = realloc(hfuzz->coverageRequired.requiredFiles, newCap * sizeof(char*));
-                if (!p) {
-                    LOG_E("realloc(requiredFiles, %zu) failed", newCap);
-                    free(dup);
-                } else {
-                    hfuzz->coverageRequired.requiredFiles    = p;
-                    hfuzz->coverageRequired.requiredFilesCap = newCap;
-                    hfuzz->coverageRequired.requiredFiles[idx] = dup;
-                    ATOMIC_POST_INC(hfuzz->coverageRequired.requiredFileCnt);
-                }
-            } else {
-                hfuzz->coverageRequired.requiredFiles[idx] = dup;
-                ATOMIC_POST_INC(hfuzz->coverageRequired.requiredFileCnt);
-            }
-        }
-    }
-
-    /* Full per-file guard collection (coverage_data.bin for greedy set cover) */
-    if (hfuzz->coverageData.fd < 0) return;
-
     uint32_t  localCnt = 0;
-    uint32_t  localCap_ = 4096;
-    uint32_t* localIds = malloc(localCap_ * sizeof(uint32_t));
+    uint32_t  localCap = 4096;
+    uint32_t* localIds = malloc(localCap * sizeof(uint32_t));
     if (!localIds) {
         LOG_E("malloc(localIds) failed");
         return;
@@ -725,11 +698,11 @@ static void fuzz_replayCoverageCheck(run_t* run) {
 
     for (uint64_t i = 0; i < guardNb; i++) {
         if (localMap[i]) {
-            if (localCnt >= localCap_) {
-                localCap_ *= 2;
-                uint32_t* tmp = realloc(localIds, localCap_ * sizeof(uint32_t));
+            if (localCnt >= localCap) {
+                localCap *= 2;
+                uint32_t* tmp = realloc(localIds, localCap * sizeof(uint32_t));
                 if (!tmp) {
-                    LOG_E("realloc(localIds, %u) failed", localCap_);
+                    LOG_E("realloc(localIds, %u) failed", localCap);
                     free(localIds);
                     return;
                 }
@@ -752,18 +725,102 @@ static void fuzz_replayCoverageCheck(run_t* run) {
     }
     uint16_t fnLen = (uint16_t)baseLen;
 
-    MX_SCOPED_LOCK(&hfuzz->coverageData.entryMutex);
-    if (!files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&fnLen, 2) ||
-        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)base, fnLen) ||
-        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&localCnt, 4) ||
-        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)localIds,
-                         localCnt * sizeof(uint32_t))) {
-        PLOG_W("Failed to write coverage_data.bin entry for '%s'", base);
-    } else {
-        hfuzz->coverageData.entryCnt++;
+    size_t idsBytes  = localCnt * sizeof(uint32_t);
+    size_t entrySize = sizeof(fnLen) + fnLen + sizeof(localCnt) + idsBytes;
+    uint8_t* buf = malloc(entrySize);
+    if (!buf) {
+        LOG_E("malloc(entry, %zu) failed", entrySize);
+        free(localIds);
+        return;
     }
 
+    size_t off = 0;
+    memcpy(buf + off, &fnLen, sizeof(fnLen));       off += sizeof(fnLen);
+    memcpy(buf + off, base, fnLen);                 off += fnLen;
+    memcpy(buf + off, &localCnt, sizeof(localCnt)); off += sizeof(localCnt);
+    memcpy(buf + off, localIds, idsBytes);
+
     free(localIds);
+
+    MX_SCOPED_LOCK(&hfuzz->coverageData.entryMutex);
+    if (!files_writeToFd(hfuzz->coverageData.fd, buf, entrySize)) {
+        PLOG_W("Failed to write coverage_data.bin entry for '%s'", base);
+    } else {
+        ATOMIC_POST_INC(hfuzz->coverageData.entryCnt);
+    }
+
+    free(buf);
+}
+
+static void fuzz_replayRecordRequiredFile(honggfuzz_t* hfuzz, const char* base) {
+    char* dup = strdup(base);
+    if (!dup) {
+        LOG_E("strdup('%s') failed", base);
+        return;
+    }
+
+    MX_SCOPED_LOCK(&hfuzz->coverageRequired.requiredFilesMutex);
+    size_t idx = ATOMIC_GET(hfuzz->coverageRequired.requiredFileCnt);
+    if (idx >= hfuzz->coverageRequired.requiredFilesCap) {
+        size_t newCap = hfuzz->coverageRequired.requiredFilesCap * 2;
+        if (newCap < 1024) newCap = 1024;
+        char** p = realloc(hfuzz->coverageRequired.requiredFiles, newCap * sizeof(char*));
+        if (!p) {
+            LOG_E("realloc(requiredFiles, %zu) failed", newCap);
+            free(dup);
+            return;
+        }
+        hfuzz->coverageRequired.requiredFiles    = p;
+        hfuzz->coverageRequired.requiredFilesCap = newCap;
+    }
+    hfuzz->coverageRequired.requiredFiles[idx] = dup;
+    ATOMIC_POST_INC(hfuzz->coverageRequired.requiredFileCnt);
+}
+
+static void fuzz_replayCoverageCheck(run_t* run) {
+    honggfuzz_t* hfuzz = run->global;
+    uint8_t* localMap = run->perThreadCovFeedbackMap;
+    uint64_t guardNb  = atomic_load_explicit(&hfuzz->feedback.covFeedbackMap->guardNb, memory_order_relaxed);
+
+    if (guardNb == 0) return;
+    uint64_t cap = guardNb < _HF_PC_GUARD_MAX ? guardNb : _HF_PC_GUARD_MAX;
+
+    uint8_t* covGuards = (uint8_t*)ATOMIC_GET(hfuzz->coverageRequired.coveredGuards);
+    if (!covGuards) {
+        MX_SCOPED_LOCK(&hfuzz->coverageRequired.requiredFilesMutex);
+        covGuards = (uint8_t*)ATOMIC_GET(hfuzz->coverageRequired.coveredGuards);
+        if (!covGuards) {
+            covGuards = calloc(cap, 1);
+            if (!covGuards) {
+                LOG_E("calloc(coveredGuards, %" PRIu64 ") failed", cap);
+                return;
+            }
+            ATOMIC_SET(hfuzz->coverageRequired.coveredGuardsSize, cap);
+            ATOMIC_SET(hfuzz->coverageRequired.coveredGuards, covGuards);
+            LOG_I("Allocated covered-guards bitmap: %" PRIu64 " guards", cap);
+        }
+    }
+
+    uint64_t allocSize = ATOMIC_GET(hfuzz->coverageRequired.coveredGuardsSize);
+    if (cap > allocSize) cap = allocSize;
+
+    bool hasNew = false;
+    for (uint64_t i = 0; i < cap; i++) {
+        if (localMap[i] && !ATOMIC_GET(covGuards[i]) && ATOMIC_XCHG(covGuards[i], 1) == 0) {
+            hasNew = true;
+        }
+    }
+
+    /* Use basename: honggfuzz corpora are flat directories, no nested paths. */
+    const char* fname = run->dynfile->path;
+    const char* base = strrchr(fname, '/');
+    base = base ? base + 1 : fname;
+
+    if (hasNew) {
+        fuzz_replayRecordRequiredFile(hfuzz, base);
+    }
+
+    fuzz_coverageDataAppendEntry(hfuzz, localMap, guardNb, base);
 }
 
 static void fuzz_fuzzLoop(run_t* run) {
@@ -1004,7 +1061,21 @@ static void* fuzz_threadNew(void* arg) {
     arch_reapKill();
 
     if (run.pid) {
-        kill(run.pid, SIGKILL);
+        if (hfuzz->cfg.replay && run.persistentSock != -1) {
+            /* Graceful shutdown: close socket so the child's fetch loop sees
+               EOF and calls exit(0), which fires atexit handlers (e.g. LLVM
+               profile data writer for profraw generation). */
+            close(run.persistentSock);
+            run.persistentSock = -1;
+            int status;
+            struct timespec ts = {.tv_sec = 0, .tv_nsec = 250000000}; /* 250ms */
+            nanosleep(&ts, NULL);
+            if (waitpid(run.pid, &status, WNOHANG) <= 0) {
+                kill(run.pid, SIGKILL);
+            }
+        } else {
+            kill(run.pid, SIGKILL);
+        }
     }
 
     size_t j = ATOMIC_PRE_INC(run.global->threads.threadsFinished);
@@ -1012,6 +1083,36 @@ static void* fuzz_threadNew(void* arg) {
     LOG_I("Terminating thread no. #%" PRId32 ", left: %zu", fuzzNo,
           j < total ? total - j : 0);
     return NULL;
+}
+
+static void fuzz_replayCoverageDataInit(honggfuzz_t* hfuzz) {
+    if (pthread_mutex_init(&hfuzz->coverageRequired.requiredFilesMutex, NULL) != 0) {
+        PLOG_F("pthread_mutex_init(requiredFilesMutex)");
+    }
+
+    char cov_path[PATH_MAX];
+    int cp = snprintf(cov_path, sizeof(cov_path), "%s/coverage_data.bin", hfuzz->io.covDirNew);
+    if (cp < 0 || (size_t)cp >= sizeof(cov_path)) {
+        LOG_E("coverage_data.bin path too long (covDirNew='%s')", hfuzz->io.covDirNew);
+        return;
+    }
+
+    hfuzz->coverageData.fd = TEMP_FAILURE_RETRY(
+        open(cov_path, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0644));
+    if (hfuzz->coverageData.fd < 0) {
+        PLOG_W("Failed to open %s for coverage data", cov_path);
+        return;
+    }
+
+    if (pthread_mutex_init(&hfuzz->coverageData.entryMutex, NULL) != 0) {
+        PLOG_F("pthread_mutex_init(entryMutex)");
+    }
+    hfuzz->coverageData.entryCnt = 0;
+    if (!fuzz_coverageDataWriteHeader(hfuzz->coverageData.fd)) {
+        PLOG_W("Failed to write coverage_data.bin header");
+        close(hfuzz->coverageData.fd);
+        hfuzz->coverageData.fd = -1;
+    }
 }
 
 void fuzz_threadsStart(honggfuzz_t* hfuzz) {
@@ -1035,40 +1136,7 @@ void fuzz_threadsStart(honggfuzz_t* hfuzz) {
         hfuzz->mutate.mutationsPerRun = 0;
         hfuzz->coverageData.fd = -1;
         if (hfuzz->io.covDirNew) {
-            if (pthread_mutex_init(&hfuzz->coverageRequired.requiredFilesMutex, NULL) != 0) {
-                PLOG_F("pthread_mutex_init(requiredFilesMutex)");
-            }
-
-            /* Open coverage_data.bin for streaming per-file guard sets */
-            char cov_path[PATH_MAX];
-            int cp = snprintf(cov_path, sizeof(cov_path), "%s/coverage_data.bin",
-                              hfuzz->io.covDirNew);
-            if (cp < 0 || (size_t)cp >= sizeof(cov_path)) {
-                LOG_E("coverage_data.bin path too long (covDirNew='%s')", hfuzz->io.covDirNew);
-            } else {
-                hfuzz->coverageData.fd = TEMP_FAILURE_RETRY(
-                    open(cov_path, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0644));
-                if (hfuzz->coverageData.fd >= 0) {
-                    if (pthread_mutex_init(&hfuzz->coverageData.entryMutex, NULL) != 0) {
-                        PLOG_F("pthread_mutex_init(entryMutex)");
-                    }
-                    hfuzz->coverageData.entryCnt = 0;
-                    /* Write 24-byte header with explicit ASCII magic and placeholder counts */
-                    const uint8_t magic[4] = { 'C', 'O', 'V', 'D' };
-                    uint32_t      version  = 1;
-                    uint64_t      zero     = 0;
-                    if (!files_writeToFd(hfuzz->coverageData.fd, magic, sizeof(magic)) ||
-                        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&version, 4) ||
-                        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&zero, 8) ||
-                        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&zero, 8)) {
-                        PLOG_W("Failed to write coverage_data.bin header");
-                        close(hfuzz->coverageData.fd);
-                        hfuzz->coverageData.fd = -1;
-                    }
-                } else {
-                    PLOG_W("Failed to open %s for coverage data", cov_path);
-                }
-            }
+            fuzz_replayCoverageDataInit(hfuzz);
         }
     } else if (hfuzz->socketFuzzer.enabled) {
         /* Don't do dry run with socketFuzzer */

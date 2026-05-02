@@ -458,6 +458,7 @@ typedef struct {
     } socketFuzzer;
     struct {
         uint8_t*        coveredGuards;
+        uint64_t        coveredGuardsSize;
         size_t          requiredFileCnt;
         pthread_mutex_t requiredFilesMutex;
         char**          requiredFiles;

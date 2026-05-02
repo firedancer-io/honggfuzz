@@ -1464,6 +1464,7 @@ void instrumentReportHarnessReject(void) {
 }
 
 const uint8_t* instrumentGetLocalPcGuardMap(void) {
+    hfuzzInstrumentInit();
     return localCovFeedback->pcGuardMap;
 }
 

@@ -1463,3 +1463,11 @@ void instrumentReportHarnessReject(void) {
     ATOMIC_POST_INC(globalCovFeedback->pidHarnessRejectCnt[my_thread_no].val);
 }
 
+const uint8_t* instrumentGetLocalPcGuardMap(void) {
+    return localCovFeedback->pcGuardMap;
+}
+
+uint64_t instrumentGetGuardCount(void) {
+    return (uint64_t)instrumentReserveGuard(0);
+}
+

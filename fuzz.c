@@ -34,6 +34,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/mman.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -493,6 +495,7 @@ static bool fuzz_fetchInput(run_t* run) {
             const char* state_str = (st == _HF_STATE_DYNAMIC_DRY_RUN) ? "dry_run"
                                   : (st == _HF_STATE_DYNAMIC_MAIN)    ? "dynamic"
                                   : (st == _HF_STATE_DYNAMIC_MINIMIZE) ? "minimize"
+                                  : (st == _HF_STATE_REPLAY)           ? "replay"
                                   :                                      "static";
 
             uint64_t timeouts = ATOMIC_GET(hfuzz->cnts.timeoutedCnt);
@@ -566,6 +569,13 @@ static bool fuzz_fetchInput(run_t* run) {
 
     {
         fuzzState_t st = fuzz_getState(run->global);
+        if (st == _HF_STATE_REPLAY) {
+            run->mutationsPerRun = 0U;
+            if (input_prepareStaticFile(run, /* rewind= */ false, /* mangle= */ false)) {
+                return true;
+            }
+            return false;
+        }
         if (st == _HF_STATE_DYNAMIC_DRY_RUN) {
             run->mutationsPerRun = 0U;
             if (input_prepareStaticFile(run, /* rewind= */ false, /* mangle= */ false)) {
@@ -636,6 +646,126 @@ static bool fuzz_fetchInput(run_t* run) {
     return true;
 }
 
+static void fuzz_replayCoverageCheck(run_t* run) {
+    honggfuzz_t* hfuzz = run->global;
+    uint8_t* localMap = run->perThreadCovFeedbackMap;
+    uint64_t guardNb  = ATOMIC_GET(hfuzz->feedback.covFeedbackMap->guardNb);
+
+    /* Lazy-init the covered bitmap at _HF_PC_GUARD_MAX (one-shot, never
+       resized).  calloc on Linux uses demand-paging — only touched pages
+       consume physical memory, so the virtual reservation is cheap. */
+    uint8_t* covGuards = (uint8_t*)ATOMIC_GET(hfuzz->coverageRequired.coveredGuards);
+    if (!covGuards) {
+        if (guardNb == 0) return;
+        MX_SCOPED_LOCK(&hfuzz->coverageRequired.requiredFilesMutex);
+        covGuards = (uint8_t*)ATOMIC_GET(hfuzz->coverageRequired.coveredGuards);
+        if (!covGuards) {
+            covGuards = calloc(_HF_PC_GUARD_MAX, 1);
+            if (!covGuards) {
+                LOG_E("calloc(coveredGuards, %zu) failed", (size_t)_HF_PC_GUARD_MAX);
+                return;
+            }
+            ATOMIC_SET(hfuzz->coverageRequired.coveredGuards, covGuards);
+            LOG_I("Allocated covered-guards bitmap (%zu virtual bytes)", (size_t)_HF_PC_GUARD_MAX);
+        }
+    }
+
+    if (guardNb > _HF_PC_GUARD_MAX) guardNb = _HF_PC_GUARD_MAX;
+
+    bool hasNew = false;
+    for (uint64_t i = 0; i < guardNb; i++) {
+        if (localMap[i] && !ATOMIC_GET(covGuards[i]) && ATOMIC_XCHG(covGuards[i], 1) == 0) {
+            hasNew = true;
+        }
+    }
+
+    /* Use basename — honggfuzz corpora are flat directories, no nested paths. */
+    const char* fname = run->dynfile->path;
+    const char* base = strrchr(fname, '/');
+    base = base ? base + 1 : fname;
+
+    /* First-touch set cover (backwards-compat coverage_required.json) */
+    if (hasNew) {
+        char* dup = strdup(base);
+        if (!dup) {
+            LOG_E("strdup('%s') failed", base);
+        } else {
+            MX_SCOPED_LOCK(&hfuzz->coverageRequired.requiredFilesMutex);
+            size_t idx = ATOMIC_GET(hfuzz->coverageRequired.requiredFileCnt);
+            if (idx >= hfuzz->coverageRequired.requiredFilesCap) {
+                size_t newCap = hfuzz->coverageRequired.requiredFilesCap * 2;
+                if (newCap < 1024) newCap = 1024;
+                char** p = realloc(hfuzz->coverageRequired.requiredFiles, newCap * sizeof(char*));
+                if (!p) {
+                    LOG_E("realloc(requiredFiles, %zu) failed", newCap);
+                    free(dup);
+                } else {
+                    hfuzz->coverageRequired.requiredFiles    = p;
+                    hfuzz->coverageRequired.requiredFilesCap = newCap;
+                    hfuzz->coverageRequired.requiredFiles[idx] = dup;
+                    ATOMIC_POST_INC(hfuzz->coverageRequired.requiredFileCnt);
+                }
+            } else {
+                hfuzz->coverageRequired.requiredFiles[idx] = dup;
+                ATOMIC_POST_INC(hfuzz->coverageRequired.requiredFileCnt);
+            }
+        }
+    }
+
+    /* Full per-file guard collection (coverage_data.bin for greedy set cover) */
+    if (hfuzz->coverageData.fd < 0) return;
+
+    uint32_t  localCnt = 0;
+    uint32_t  localCap_ = 4096;
+    uint32_t* localIds = malloc(localCap_ * sizeof(uint32_t));
+    if (!localIds) {
+        LOG_E("malloc(localIds) failed");
+        return;
+    }
+
+    for (uint64_t i = 0; i < guardNb; i++) {
+        if (localMap[i]) {
+            if (localCnt >= localCap_) {
+                localCap_ *= 2;
+                uint32_t* tmp = realloc(localIds, localCap_ * sizeof(uint32_t));
+                if (!tmp) {
+                    LOG_E("realloc(localIds, %u) failed", localCap_);
+                    free(localIds);
+                    return;
+                }
+                localIds = tmp;
+            }
+            localIds[localCnt++] = (uint32_t)i;
+        }
+    }
+
+    if (localCnt == 0) {
+        free(localIds);
+        return;
+    }
+
+    size_t baseLen = strlen(base);
+    if (baseLen > UINT16_MAX) {
+        LOG_W("Filename too long for coverage_data.bin (%zu bytes), skipping '%s'", baseLen, base);
+        free(localIds);
+        return;
+    }
+    uint16_t fnLen = (uint16_t)baseLen;
+
+    MX_SCOPED_LOCK(&hfuzz->coverageData.entryMutex);
+    if (!files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&fnLen, 2) ||
+        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)base, fnLen) ||
+        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&localCnt, 4) ||
+        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)localIds,
+                         localCnt * sizeof(uint32_t))) {
+        PLOG_W("Failed to write coverage_data.bin entry for '%s'", base);
+    } else {
+        hfuzz->coverageData.entryCnt++;
+    }
+
+    free(localIds);
+}
+
 static void fuzz_fuzzLoop(run_t* run) {
     run->timeStartedUSecs = util_timeNowUSecs();
     run->crashFileName[0] = '\0';
@@ -655,6 +785,9 @@ static void fuzz_fuzzLoop(run_t* run) {
     run->hwCnts.newBBCnt     = 0;
 
     if (!fuzz_fetchInput(run)) {
+        if (run->global->cfg.replay) {
+            return;
+        }
         if (run->global->cfg.minimize && fuzz_getState(run->global) == _HF_STATE_DYNAMIC_MINIMIZE) {
             fuzz_setTerminating();
             return;
@@ -689,13 +822,19 @@ static void fuzz_fuzzLoop(run_t* run) {
         }
     }
 
-    if (run->global->feedback.dynFileMethod != _HF_DYNFILE_NONE) {
-        fuzz_perfFeedback(run);
+    if (run->global->cfg.replay) {
+        if (run->perThreadCovFeedbackMap && run->global->io.covDirNew) {
+            fuzz_replayCoverageCheck(run);
+        }
+    } else {
+        if (run->global->feedback.dynFileMethod != _HF_DYNFILE_NONE) {
+            fuzz_perfFeedback(run);
+        }
+        if (run->global->cfg.useVerifier && !fuzz_runVerifier(run)) {
+            return;
+        }
+        report_saveReport(run);
     }
-    if (run->global->cfg.useVerifier && !fuzz_runVerifier(run)) {
-        return;
-    }
-    report_saveReport(run);
 }
 
 static void fuzz_fuzzLoopSocket(run_t* run) {
@@ -800,7 +939,26 @@ static void* fuzz_threadNew(void* arg) {
         LOG_F("files_createSharedMem(name='%s', sz=%zu, dir='%s') failed", mapname,
             sizeof(feedback_t), run.global->io.workDir);
     }
+    run.perThreadCovFeedbackMap = NULL;
+    if (run.global->cfg.replay && run.global->io.covDirNew) {
+        _Static_assert(
+            offsetof(feedback_t, pcGuardMap) == 0, "mmap at offset 0 assumes pcGuardMap is first");
+        int mflags = files_getTmpMapFlags(MAP_SHARED, /* nocore= */ true);
+        void* m = mmap(NULL, _HF_PC_GUARD_MAX, PROT_READ,
+            mflags, run.perThreadCovFeedbackFd, 0);
+        if (m == MAP_FAILED) {
+            LOG_W("mmap(perThreadCovFeedbackFd) failed for thread %u", fuzzNo);
+        } else {
+#if defined(MADV_DONTDUMP)
+            madvise(m, _HF_PC_GUARD_MAX, MADV_DONTDUMP);
+#endif
+            run.perThreadCovFeedbackMap = (uint8_t*)m;
+        }
+    }
     defer {
+        if (run.perThreadCovFeedbackMap) {
+            munmap(run.perThreadCovFeedbackMap, _HF_PC_GUARD_MAX);
+        }
         if (run.perThreadCovFeedbackFd != -1) {
             close(run.perThreadCovFeedbackFd);
         }
@@ -811,9 +969,10 @@ static void* fuzz_threadNew(void* arg) {
     }
 
     for (;;) {
-        /* Check if dry run mode with verifier enabled */
-        if (run.global->mutate.mutationsPerRun == 0U && run.global->cfg.useVerifier &&
-            !hfuzz->socketFuzzer.enabled) {
+        /* Replay mode or dry-run+verifier: exit after all static files processed */
+        if (run.global->cfg.replay ||
+            (run.global->mutate.mutationsPerRun == 0U && run.global->cfg.useVerifier &&
+             !hfuzz->socketFuzzer.enabled)) {
             if (ATOMIC_POST_INC(run.global->cnts.mutationsCnt) >= run.global->io.fileCnt) {
                 break;
             }
@@ -869,7 +1028,49 @@ void fuzz_threadsStart(honggfuzz_t* hfuzz) {
         LOG_F("Couldn't prepare sanitizer options");
     }
 
-    if (hfuzz->socketFuzzer.enabled) {
+    if (hfuzz->cfg.replay) {
+        LOG_I("Entering Replay mode (coverage collection)");
+        hfuzz->feedback.state = _HF_STATE_REPLAY;
+        hfuzz->feedback.dynFileMethod |= _HF_DYNFILE_SOFT;
+        hfuzz->mutate.mutationsPerRun = 0;
+        hfuzz->coverageData.fd = -1;
+        if (hfuzz->io.covDirNew) {
+            if (pthread_mutex_init(&hfuzz->coverageRequired.requiredFilesMutex, NULL) != 0) {
+                PLOG_F("pthread_mutex_init(requiredFilesMutex)");
+            }
+
+            /* Open coverage_data.bin for streaming per-file guard sets */
+            char cov_path[PATH_MAX];
+            int cp = snprintf(cov_path, sizeof(cov_path), "%s/coverage_data.bin",
+                              hfuzz->io.covDirNew);
+            if (cp < 0 || (size_t)cp >= sizeof(cov_path)) {
+                LOG_E("coverage_data.bin path too long (covDirNew='%s')", hfuzz->io.covDirNew);
+            } else {
+                hfuzz->coverageData.fd = TEMP_FAILURE_RETRY(
+                    open(cov_path, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0644));
+                if (hfuzz->coverageData.fd >= 0) {
+                    if (pthread_mutex_init(&hfuzz->coverageData.entryMutex, NULL) != 0) {
+                        PLOG_F("pthread_mutex_init(entryMutex)");
+                    }
+                    hfuzz->coverageData.entryCnt = 0;
+                    /* Write 24-byte header with placeholder guard_count and file_count */
+                    uint32_t magic   = 0x434F5644; /* "COVD" */
+                    uint32_t version = 1;
+                    uint64_t zero    = 0;
+                    if (!files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&magic, 4) ||
+                        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&version, 4) ||
+                        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&zero, 8) ||
+                        !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&zero, 8)) {
+                        PLOG_W("Failed to write coverage_data.bin header");
+                        close(hfuzz->coverageData.fd);
+                        hfuzz->coverageData.fd = -1;
+                    }
+                } else {
+                    PLOG_W("Failed to open %s for coverage data", cov_path);
+                }
+            }
+        }
+    } else if (hfuzz->socketFuzzer.enabled) {
         /* Don't do dry run with socketFuzzer */
         LOG_I("Entering phase - Feedback Driven Mode (SocketFuzzer)");
         hfuzz->feedback.state = _HF_STATE_DYNAMIC_MAIN;

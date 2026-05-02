@@ -1053,11 +1053,11 @@ void fuzz_threadsStart(honggfuzz_t* hfuzz) {
                         PLOG_F("pthread_mutex_init(entryMutex)");
                     }
                     hfuzz->coverageData.entryCnt = 0;
-                    /* Write 24-byte header with placeholder guard_count and file_count */
-                    uint32_t magic   = 0x434F5644; /* "COVD" */
-                    uint32_t version = 1;
-                    uint64_t zero    = 0;
-                    if (!files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&magic, 4) ||
+                    /* Write 24-byte header with explicit ASCII magic and placeholder counts */
+                    const uint8_t magic[4] = { 'C', 'O', 'V', 'D' };
+                    uint32_t      version  = 1;
+                    uint64_t      zero     = 0;
+                    if (!files_writeToFd(hfuzz->coverageData.fd, magic, sizeof(magic)) ||
                         !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&version, 4) ||
                         !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&zero, 8) ||
                         !files_writeToFd(hfuzz->coverageData.fd, (const uint8_t*)&zero, 8)) {

@@ -37,6 +37,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -1004,7 +1005,21 @@ static void* fuzz_threadNew(void* arg) {
     arch_reapKill();
 
     if (run.pid) {
-        kill(run.pid, SIGKILL);
+        if (hfuzz->cfg.replay && run.persistentSock != -1) {
+            /* Graceful shutdown: close socket so the child's fetch loop sees
+               EOF and calls exit(0), which fires atexit handlers (e.g. LLVM
+               profile data writer for profraw generation). */
+            close(run.persistentSock);
+            run.persistentSock = -1;
+            int status;
+            struct timespec ts = {.tv_sec = 0, .tv_nsec = 250000000}; /* 250ms */
+            nanosleep(&ts, NULL);
+            if (waitpid(run.pid, &status, WNOHANG) <= 0) {
+                kill(run.pid, SIGKILL);
+            }
+        } else {
+            kill(run.pid, SIGKILL);
+        }
     }
 
     size_t j = ATOMIC_PRE_INC(run.global->threads.threadsFinished);

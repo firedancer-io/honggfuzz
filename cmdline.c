@@ -343,6 +343,7 @@ bool cmdlineParse(int argc, char* argv[], honggfuzz_t* hfuzz) {
                 .workDir                = {},
                 .crashDir               = NULL,
                 .covDirNew              = NULL,
+                .covDirNewMinEdges      = 0U,
                 .saveUnique             = true,
                 .saveSmaller            = false,
                 .dynfileqMaxSz          = 0U,
@@ -527,6 +528,7 @@ bool cmdlineParse(int argc, char* argv[], honggfuzz_t* hfuzz) {
         { { "crashdir", required_argument, NULL, 0x600 }, "Directory where crashes are saved to (default: workspace directory)" },
         { { "covdir_all", required_argument, NULL, 'o' }, "** DEPRECATED ** use --output" },
         { { "covdir_new", required_argument, NULL, 0x602 }, "New coverage (beyond the dry-run fuzzing phase) is written to this separate directory" },
+        { { "covdir_new_min_edges", required_argument, NULL, 0x603 }, "Only write inputs discovering at least this many new edges/PCs/BBs to --covdir_new (default: 0 [write every accepted input])" },
         { { "dict", required_argument, NULL, 'w' }, "Dictionary file. Format:http://llvm.org/docs/LibFuzzer.html#dictionaries" },
         { { "stackhash_bl", required_argument, NULL, 'B' }, "Stackhashes blocklist file (one entry per line)" },
         { { "mutate_cmd", required_argument, NULL, 'c' }, "External command producing fuzz files (instead of internal mutators)" },
@@ -670,6 +672,9 @@ bool cmdlineParse(int argc, char* argv[], honggfuzz_t* hfuzz) {
             break;
         case 0x602:
             hfuzz->io.covDirNew = optarg;
+            break;
+        case 0x603:
+            hfuzz->io.covDirNewMinEdges = strtoull(optarg, NULL, 10);
             break;
         case 'r':
             hfuzz->mutate.mutationsPerRun = strtoul(optarg, NULL, 10);

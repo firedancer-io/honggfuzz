@@ -673,9 +673,17 @@ bool cmdlineParse(int argc, char* argv[], honggfuzz_t* hfuzz) {
         case 0x602:
             hfuzz->io.covDirNew = optarg;
             break;
-        case 0x603:
-            hfuzz->io.covDirNewMinEdges = strtoull(optarg, NULL, 10);
+        case 0x603: {
+            char* end = NULL;
+            errno     = 0;
+            unsigned long long value = strtoull(optarg, &end, 10);
+            if (errno == ERANGE || end == optarg || *end != '\0') {
+                LOG_E("'--covdir_new_min_edges %s' is not a valid non-negative integer", optarg);
+                return false;
+            }
+            hfuzz->io.covDirNewMinEdges = value;
             break;
+        }
         case 'r':
             hfuzz->mutate.mutationsPerRun = strtoul(optarg, NULL, 10);
             break;

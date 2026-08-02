@@ -837,11 +837,17 @@ int main(int argc, char** argv) {
         if (hfuzz.io.covDirNew) {
             size_t written  = ATOMIC_GET(hfuzz.io.covDirNewWritten);
             size_t gated    = ATOMIC_GET(hfuzz.io.covDirNewGated);
-            size_t imported = ATOMIC_GET(hfuzz.io.covDirNewImportedSkipped);
+            size_t refound  = ATOMIC_GET(hfuzz.io.covDirNewImportRefound);
+            size_t enqueued = ATOMIC_GET(hfuzz.io.covDirNewImportEnqueued);
+            /* The first three are the feedback loop's decisions and account for it
+             * exactly.  Enqueued imports are reported separately: they are insertions
+             * the loop has not judged, so folding them in would count each pulled-in
+             * file twice. */
             LOG_I("covdir_new: exported %zu, gated %zu by --covdir_new_min_edges %" PRIu64
-                  ", skipped %zu imported (%zu accepted by the feedback loop)",
-                written, gated, hfuzz.io.covDirNewMinEdges, imported,
-                written + gated + imported);
+                  ", skipped %zu re-found imports = %zu accepted by the feedback loop"
+                  " (plus %zu imports suppressed at enqueue)",
+                written, gated, hfuzz.io.covDirNewMinEdges, refound,
+                written + gated + refound, enqueued);
         }
 
         if (ATOMIC_GET(hfuzz.coverageRequired.requiredFileCnt) > 0 && hfuzz.io.covDirNew) {

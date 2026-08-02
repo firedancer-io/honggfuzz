@@ -496,8 +496,15 @@ void input_addDynamicInput(run_t* run) {
      * code this host had not covered -- newEdges > 0 -- which clears any threshold.
      * Measured: 20 of 22 files a run exported were byte-identical to inputs it had
      * been handed.  Provenance is a property of the input, not of a tuning knob. */
-    if (dynfile->imported || run->dynfileFromImport) {
-        ATOMIC_POST_INC(run->global->io.covDirNewImportedSkipped);
+    if (dynfile->imported) {
+        /* First insertion of a pulled-in file: the feedback loop has not judged it. */
+        ATOMIC_POST_INC(run->global->io.covDirNewImportEnqueued);
+        return;
+    }
+    if (run->dynfileFromImport) {
+        /* The loop accepted it after executing it -- a real feedback decision, and the
+         * one that would otherwise have exported another host's input as our find. */
+        ATOMIC_POST_INC(run->global->io.covDirNewImportRefound);
         return;
     }
 
@@ -516,26 +523,38 @@ void input_addDynamicInput(run_t* run) {
     if (!run->global->io.covDirNew) {
         return;
     }
+
+    /* Names are content-addressed, so an input the loop accepts twice -- two threads
+     * finding it, or a re-add -- maps to a file that is already there.
+     * input_writeCovFile reports success for that case, so ask first: counting it would
+     * overstate what the directory holds, and a second coverage_data.bin entry under
+     * the same name would inflate its file_count.  (Two threads can still race past
+     * this; the write is atomic and the bytes are identical, so the cost is at worst
+     * one double count, not a corrupt file.) */
+    char fname[PATH_MAX];
+    input_generateFileName(dynfile, run->global->io.covDirNew, fname);
+    if (files_exists(fname)) {
+        return;
+    }
+
     if (!input_writeCovFile(run->global->io.covDirNew, dynfile)) {
         LOG_E("Couldn't save the new coverage data to '%s'", run->global->io.covDirNew);
         return;
     }
     ATOMIC_POST_INC(run->global->io.covDirNewWritten);
 
-    /* Record which guards this input hit, keyed by the name it was just written under.
-     * Octane reads coverage_data.bin from the harvest directory to compute guards_novel
-     * and guards_merged; without this they are zero on every fuzzing job, which is how
-     * an engine over-reporting its discoveries went unnoticed -- there was no
-     * independent measure of what a reported discovery actually covered.
+    /* Record which guards this input hit, keyed by the name just written.  Octane reads
+     * coverage_data.bin from the harvest directory to compute guards_novel and
+     * guards_merged; without this they are zero on every fuzzing job, which is how an
+     * engine over-reporting its discoveries went unnoticed -- there was no independent
+     * measure of what a reported discovery actually covered.
      *
-     * The per-thread map is cleared by the child at the top of each input, so it holds
-     * exactly this input's guards.  Same basename convention as replay: honggfuzz
-     * corpora are flat. */
-    if (run->perThreadCovFeedbackMap && run->global->feedback.covFeedbackMap) {
-        char fname[PATH_MAX];
-        input_generateFileName(dynfile, run->global->io.covDirNew, fname);
+     * Only reached under persistent mode: fuzz_coverageDataInit leaves the fd closed
+     * otherwise, because only the persistent child resets the per-thread guard map
+     * between inputs.  Same flat-basename convention as replay. */
+    if (run->perThreadCovFeedbackMap) {
         const char* base = strrchr(fname, '/');
-        base              = base ? base + 1 : fname;
+        base             = base ? base + 1 : fname;
         uint64_t guardNb = atomic_load_explicit(
             &run->global->feedback.covFeedbackMap->guardNb, memory_order_relaxed);
         fuzz_coverageDataAppendEntry(run->global, run->perThreadCovFeedbackMap, guardNb, base);

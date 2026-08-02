@@ -320,8 +320,15 @@ typedef struct {
         size_t      covDirNewGated;
         /* Imported inputs (--dynamic_input) held back from covDirNew.  These were
          * handed to us; re-exporting them reports another host's corpus as this run's
-         * discoveries. */
-        size_t      covDirNewImportedSkipped;
+         * discoveries.
+         *
+         * Two counters because the two paths mean different things and only one of
+         * them is a feedback decision: `Enqueued` is the first insertion of a pulled-in
+         * file, which the feedback loop has not judged yet, while `Refound` is one the
+         * loop accepted after executing it.  Summing them into the
+         * "accepted by the feedback loop" total would count each import twice. */
+        size_t      covDirNewImportEnqueued;
+        size_t      covDirNewImportRefound;
         bool        saveUnique;
         bool        saveSmaller;
         size_t      dynfileqMaxSz;

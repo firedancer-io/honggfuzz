@@ -1107,7 +1107,15 @@ static void* fuzz_threadNew(void* arg) {
  * entry per input exported to --covdir_new.  Octane reads it to compute guards_novel /
  * guards_merged, which read a uniform zero for every fuzzing job for as long as this
  * was gated on cfg.replay -- so the one number that would independently corroborate a
- * job's reported discovery count carried no signal at all. */
+ * job's reported discovery count carried no signal at all.
+ *
+ * Attributing guards to one input requires the per-thread map to be reset between
+ * executions, and only the persistent-mode child does that:
+ * instrumentResetLocalCovFeedback() at the top of HonggfuzzRunOneInput().  A
+ * non-persistent target maps the same per-thread file on every exec and
+ * initializeLocalCovFeedback() does not clear it, so its guards accumulate over the
+ * worker's whole history and every entry would overstate its input.  Hence the
+ * persistent requirement below -- record nothing rather than something wrong. */
 static void fuzz_coverageDataInit(honggfuzz_t* hfuzz) {
     if (pthread_mutex_init(&hfuzz->coverageRequired.requiredFilesMutex, NULL) != 0) {
         PLOG_F("pthread_mutex_init(requiredFilesMutex)");
@@ -1154,7 +1162,16 @@ void fuzz_threadsStart(honggfuzz_t* hfuzz) {
 
     hfuzz->coverageData.fd = -1;
     if (hfuzz->io.covDirNew) {
-        fuzz_coverageDataInit(hfuzz);
+        /* Replay is unchanged -- it predates this and drives the map one corpus file at
+         * a time.  For fuzzing the map is only per-input under persistent mode. */
+        if (hfuzz->cfg.replay || hfuzz->exe.persistent) {
+            fuzz_coverageDataInit(hfuzz);
+        } else {
+            LOG_W("--covdir_new: not recording coverage_data.bin -- per-input guard "
+                  "attribution needs persistent mode, and this target is not persistent "
+                  "(the per-thread guard map is never reset, so every entry would "
+                  "report the worker's accumulated coverage rather than the input's)");
+        }
     }
 
     if (hfuzz->cfg.replay) {

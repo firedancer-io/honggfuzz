@@ -204,6 +204,16 @@ static bool initializeLocalCovFeedback(void) {
             _HF_PERTHREAD_BITMAP_FD, sizeof(feedback_t));
         return false;
     }
+
+    /* The map belongs to the parent's thread slot and outlives us: a persistent child
+     * is restarted on crash, timeout, or after its iteration budget, and the next one
+     * inherits whatever the last left behind.  instrumentResetLocalCovFeedback() cannot
+     * undo that -- it walks localGuardTouched, which is process-local and empty here --
+     * so without this the first input of every new child is credited with the dead
+     * child's guards.  Once per process, bounded by the guards registered so far
+     * (zero on the very first child, whose map is freshly created and already clear). */
+    bzero(localCovFeedback->pcGuardMap, HF_MIN(instrumentReserveGuard(0), _HF_PC_GUARD_MAX));
+
     return true;
 }
 

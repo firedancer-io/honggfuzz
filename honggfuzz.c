@@ -830,6 +830,20 @@ int main(int argc, char** argv) {
             LOG_I("Wrote %zu coverage data entries to coverage_data.bin", (size_t)fileCntFinal);
         }
 
+        /* What the --covdir_new edge gate actually did.  A discovery count on its own
+         * cannot be sanity-checked: it reads the same whether the gate is engaging and
+         * the run genuinely found little, or the gate is not engaging at all.  Both
+         * sides of the decision, plus the threshold that produced them. */
+        if (hfuzz.io.covDirNew) {
+            size_t written  = ATOMIC_GET(hfuzz.io.covDirNewWritten);
+            size_t gated    = ATOMIC_GET(hfuzz.io.covDirNewGated);
+            size_t imported = ATOMIC_GET(hfuzz.io.covDirNewImportedSkipped);
+            LOG_I("covdir_new: exported %zu, gated %zu by --covdir_new_min_edges %" PRIu64
+                  ", skipped %zu imported (%zu accepted by the feedback loop)",
+                written, gated, hfuzz.io.covDirNewMinEdges, imported,
+                written + gated + imported);
+        }
+
         if (ATOMIC_GET(hfuzz.coverageRequired.requiredFileCnt) > 0 && hfuzz.io.covDirNew) {
             char req_path[PATH_MAX];
             int n = snprintf(req_path, sizeof(req_path), "%s/coverage_required.json",

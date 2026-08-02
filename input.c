@@ -485,6 +485,22 @@ void input_addDynamicInput(run_t* run) {
 
     ATOMIC_POST_INC(run->global->io.newUnitsAdded);
 
+    /* An imported input (--dynamic_input) is one another host already found and Octane
+     * handed to us.  It is not a discovery of this run, and covDirNew is consumed as a
+     * discovery stream, so it must never be re-exported.
+     *
+     * Not a subcase of the edge gate below.  An imported input carries newEdges == 0
+     * when it is first enqueued, so the gate only holds it back at
+     * covDirNewMinEdges >= 1; at the default of 0 the comparison is 0 < 0 and it goes
+     * straight back out.  And once it is selected and executed it may genuinely reach
+     * code this host had not covered -- newEdges > 0 -- which clears any threshold.
+     * Measured: 20 of 22 files a run exported were byte-identical to inputs it had
+     * been handed.  Provenance is a property of the input, not of a tuning knob. */
+    if (dynfile->imported || run->dynfileFromImport) {
+        ATOMIC_POST_INC(run->global->io.covDirNewImportedSkipped);
+        return;
+    }
+
     /* The feedback loop also accepts inputs that only refined an already-covered
      * edge (a new hit-count bucket, a deeper stack, a lower instruction/branch
      * count).  Those are worth keeping in the in-RAM queue, where they age out,
@@ -493,11 +509,36 @@ void input_addDynamicInput(run_t* run) {
      * softNewEdge + softNewPC + newBBCnt, so gating on it keeps covDirNew to
      * inputs that actually reached new code. */
     if (dynfile->newEdges < run->global->io.covDirNewMinEdges) {
+        ATOMIC_POST_INC(run->global->io.covDirNewGated);
         return;
     }
 
-    if (run->global->io.covDirNew && !input_writeCovFile(run->global->io.covDirNew, dynfile)) {
+    if (!run->global->io.covDirNew) {
+        return;
+    }
+    if (!input_writeCovFile(run->global->io.covDirNew, dynfile)) {
         LOG_E("Couldn't save the new coverage data to '%s'", run->global->io.covDirNew);
+        return;
+    }
+    ATOMIC_POST_INC(run->global->io.covDirNewWritten);
+
+    /* Record which guards this input hit, keyed by the name it was just written under.
+     * Octane reads coverage_data.bin from the harvest directory to compute guards_novel
+     * and guards_merged; without this they are zero on every fuzzing job, which is how
+     * an engine over-reporting its discoveries went unnoticed -- there was no
+     * independent measure of what a reported discovery actually covered.
+     *
+     * The per-thread map is cleared by the child at the top of each input, so it holds
+     * exactly this input's guards.  Same basename convention as replay: honggfuzz
+     * corpora are flat. */
+    if (run->perThreadCovFeedbackMap && run->global->feedback.covFeedbackMap) {
+        char fname[PATH_MAX];
+        input_generateFileName(dynfile, run->global->io.covDirNew, fname);
+        const char* base = strrchr(fname, '/');
+        base              = base ? base + 1 : fname;
+        uint64_t guardNb = atomic_load_explicit(
+            &run->global->feedback.covFeedbackMap->guardNb, memory_order_relaxed);
+        fuzz_coverageDataAppendEntry(run->global, run->perThreadCovFeedbackMap, guardNb, base);
     }
 }
 
@@ -1234,6 +1275,11 @@ void input_enqueueDynamicInputs(honggfuzz_t* hfuzz) {
 
         run_t tmp_run;
         tmp_run.global        = hfuzz;
+        /* No thread executed this input -- it was read off disk -- so there is no
+         * per-thread guard map to attribute to it.  Left uninitialised this is a stack
+         * garbage pointer that input_addDynamicInput would dereference. */
+        tmp_run.perThreadCovFeedbackMap = NULL;
+        tmp_run.dynfileFromImport       = true;
         dynfile_t tmp_dynfile = {
             .size          = dynamicFileSz,
             .cov           = {0xff, 0xff, 0xff, 0xff},

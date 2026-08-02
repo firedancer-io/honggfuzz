@@ -313,6 +313,15 @@ typedef struct {
          * count.  1 restricts covDirNew to inputs that reached genuinely new code,
          * which is what a distributed fuzzer wants to share between hosts. */
         uint64_t    covDirNewMinEdges;
+        /* Exports accepted by, and rejected by, the covDirNewMinEdges gate.  Reported
+         * at exit: without them a small --covdir_new is indistinguishable from a gate
+         * set too high, and a large one from a gate that is not engaging. */
+        size_t      covDirNewWritten;
+        size_t      covDirNewGated;
+        /* Imported inputs (--dynamic_input) held back from covDirNew.  These were
+         * handed to us; re-exporting them reports another host's corpus as this run's
+         * discoveries. */
+        size_t      covDirNewImportedSkipped;
         bool        saveUnique;
         bool        saveSmaller;
         size_t      dynfileqMaxSz;
@@ -535,6 +544,12 @@ typedef struct {
     unsigned     mutationsPerRun;
     dynfile_t*   dynfile;
     bool         staticFileTryMore;
+    /* Whether the input about to be re-added to the corpus came in via
+     * --dynamic_input.  fuzz_perfFeedback clears dynfile->imported before the re-add,
+     * so that the entry is re-queued as an ordinary mutable one -- which also erases
+     * the only record that we did not find this input ourselves.  Carried here so the
+     * covDirNew export decision can still see it. */
+    bool         dynfileFromImport;
     uint32_t     fuzzNo;
     int          persistentSock;
     runState_t   runState;

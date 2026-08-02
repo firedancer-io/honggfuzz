@@ -834,7 +834,10 @@ int main(int argc, char** argv) {
          * cannot be sanity-checked: it reads the same whether the gate is engaging and
          * the run genuinely found little, or the gate is not engaging at all.  Both
          * sides of the decision, plus the threshold that produced them. */
-        if (hfuzz.io.covDirNew) {
+        /* Not in SocketFuzzer mode: it returns from input_addDynamicInput before any of
+         * these are touched, so the line would report zero accepted however much was.
+         * That mode intentionally writes no corpus files, so there is nothing to say. */
+        if (hfuzz.io.covDirNew && !hfuzz.socketFuzzer.enabled) {
             size_t written  = ATOMIC_GET(hfuzz.io.covDirNewWritten);
             size_t gated    = ATOMIC_GET(hfuzz.io.covDirNewGated);
             size_t refound  = ATOMIC_GET(hfuzz.io.covDirNewImportRefound);

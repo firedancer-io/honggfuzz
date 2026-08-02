@@ -128,6 +128,17 @@ extern feedback_t* globalCovFeedback;
 extern uint32_t    my_thread_no;
 
 void HF_ITER(const uint8_t** buf_ptr, size_t* len_ptr) {
+    /* The libFuzzer driver resets the per-thread guard map in HonggfuzzRunOneInput();
+     * this manual API has no equivalent hook, so it has to happen here.  Without it the
+     * map accumulates across iterations and anything reading it per input -- replay's
+     * coverage check, and the per-file records covdir_new writes to coverage_data.bin
+     * -- credits this input with guards that earlier ones reached.
+     *
+     * Not folded into HonggfuzzFetchData(): the driver loop calls that before running
+     * the custom mutator, so a reset there would be redone at RunOneInput anyway, and
+     * that second pass is a full bzero of the guard map whenever the touched-list has
+     * overflowed. */
+    instrumentResetLocalCovFeedback();
     HonggfuzzFetchData(buf_ptr, len_ptr);
 }
 

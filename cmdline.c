@@ -348,6 +348,8 @@ bool cmdlineParse(int argc, char* argv[], honggfuzz_t* hfuzz) {
                 .covDirNewGated         = 0,
                 .covDirNewImportEnqueued = 0,
                 .covDirNewImportRefound = 0,
+                .covDirNewDuplicate     = 0,
+                .covDirNewWriteFailed   = 0,
                 .saveUnique             = true,
                 .saveSmaller            = false,
                 .dynfileqMaxSz          = 0U,

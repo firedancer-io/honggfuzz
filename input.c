@@ -402,7 +402,15 @@ static bool input_cmpCov(dynfile_t* item1, dynfile_t* item2) {
 #define TAILQ_FOREACH_HF(var, head, field)                                                         \
     for ((var) = TAILQ_FIRST((head)); (var); (var) = TAILQ_NEXT((var), field))
 
-void input_addDynamicInput(run_t* run) {
+/* Holds the dynfileq write lock for its whole body (taken below, released on return).
+ * On return, `exportName` is the basename of a file just written to covDirNew whose
+ * guard set still needs recording, or "" if there is nothing to record.
+ *
+ * The lock cannot simply be released after the queue mutation: it is also what keeps
+ * `dynfile` alive for the rest of this function, since input_prepareDynamicInput
+ * TAILQ_REMOVEs and frees a queued entry when it selects an imported one.  So the work
+ * that does not need `dynfile` is handed back to the caller instead. */
+static void input_addDynamicInputLocked(run_t* run, char* exportName) {
     if (run->global->cfg.replay) {
         return;
     }
@@ -512,9 +520,17 @@ void input_addDynamicInput(run_t* run) {
         ATOMIC_POST_INC(run->global->io.covDirNewImportEnqueued);
         return;
     }
-    if (run->dynfileFromImport) {
+    if (run->dynfileFromImport && dynfile->size == run->dynfileImportSz &&
+        util_CRC64(dynfile->data, dynfile->size) == run->dynfileImportCrc) {
         /* The loop accepted it after executing it -- a real feedback decision, and the
-         * one that would otherwise have exported another host's input as our find. */
+         * one that would otherwise have exported another host's input as our find.
+         *
+         * Only when the executed bytes are still the ones we were handed.  In
+         * persistent mode LLVMFuzzerCustomMutator rewrites the shared input in place
+         * and fuzz_perfFeedback copies the post-mutation length back, so an input that
+         * arrived as an import can reach here as a locally mutated descendant.  That
+         * descendant IS our discovery; suppressing it would trade the over-export this
+         * guard exists to stop for a silent under-export. */
         ATOMIC_POST_INC(run->global->io.covDirNewImportRefound);
         return;
     }
@@ -545,30 +561,48 @@ void input_addDynamicInput(run_t* run) {
     char fname[PATH_MAX];
     input_generateFileName(dynfile, run->global->io.covDirNew, fname);
     if (files_exists(fname)) {
+        ATOMIC_POST_INC(run->global->io.covDirNewDuplicate);
         return;
     }
 
     if (!input_writeCovFileAs(fname, dynfile)) {
         LOG_E("Couldn't save the new coverage data to '%s'", run->global->io.covDirNew);
+        ATOMIC_POST_INC(run->global->io.covDirNewWriteFailed);
         return;
     }
     ATOMIC_POST_INC(run->global->io.covDirNewWritten);
 
-    /* Record which guards this input hit, keyed by the name just written.  Octane reads
-     * coverage_data.bin from the harvest directory to compute guards_novel and
-     * guards_merged; without this they are zero on every fuzzing job, which is how an
-     * engine over-reporting its discoveries went unnoticed -- there was no independent
-     * measure of what a reported discovery actually covered.
+    /* Hand the name back so the caller can record this file's guard set once the
+     * dynfileq write lock is off.  Same flat-basename convention as replay. */
+    const char* base = strrchr(fname, '/');
+    base             = base ? base + 1 : fname;
+    snprintf(exportName, PATH_MAX, "%s", base);
+}
+
+void input_addDynamicInput(run_t* run) {
+    char exportName[PATH_MAX];
+    exportName[0] = '\0';
+
+    input_addDynamicInputLocked(run, exportName);
+
+    /* Deliberately out here, with the dynfileq write lock released.  Recording a file's
+     * guard set walks up to guardNb map bytes, allocates, and writes to disk under
+     * coverageData.entryMutex; doing that inside the lock would stall every other
+     * worker's corpus selection for the duration of each export.
+     *
+     * Octane reads coverage_data.bin from the harvest directory to compute
+     * guards_novel and guards_merged.  Without it they are zero on every fuzzing job,
+     * which is how an engine over-reporting its discoveries went unnoticed -- there
+     * was no independent measure of what a reported discovery actually covered.
      *
      * Only reached under persistent mode: fuzz_coverageDataInit leaves the fd closed
      * otherwise, because only the persistent child resets the per-thread guard map
-     * between inputs.  Same flat-basename convention as replay. */
-    if (run->perThreadCovFeedbackMap) {
-        const char* base = strrchr(fname, '/');
-        base             = base ? base + 1 : fname;
+     * between inputs. */
+    if (exportName[0] != '\0' && run->perThreadCovFeedbackMap) {
         uint64_t guardNb = atomic_load_explicit(
             &run->global->feedback.covFeedbackMap->guardNb, memory_order_relaxed);
-        fuzz_coverageDataAppendEntry(run->global, run->perThreadCovFeedbackMap, guardNb, base);
+        fuzz_coverageDataAppendEntry(
+            run->global, run->perThreadCovFeedbackMap, guardNb, exportName);
     }
 }
 
@@ -1193,6 +1227,11 @@ bool input_prepareDynamicInput(run_t* run, bool needs_mangle) {
     memcpy(run->dynfile->data, current_input->data, current_input->size);
 
     if (is_imported) {
+        /* Remember exactly what we were handed.  If a custom mutator rewrites the
+         * shared input before it executes, the add path compares against this and
+         * treats the result as our own discovery rather than a re-found import. */
+        run->dynfileImportCrc = util_CRC64(run->dynfile->data, run->dynfile->size);
+        run->dynfileImportSz  = run->dynfile->size;
         /* Imported input was removed from list, free it after copying */
         run->current       = NULL;
         run->mutationTiers = 0; /* No mutations applied to imported input */
@@ -1310,6 +1349,10 @@ void input_enqueueDynamicInputs(honggfuzz_t* hfuzz) {
          * garbage pointer that input_addDynamicInput would dereference. */
         tmp_run.perThreadCovFeedbackMap = NULL;
         tmp_run.dynfileFromImport       = true;
+        /* Unread on this path -- dynfile->imported short-circuits first -- but this
+         * run_t is built field by field, so leave nothing uninitialised. */
+        tmp_run.dynfileImportCrc        = 0;
+        tmp_run.dynfileImportSz         = 0;
         dynfile_t tmp_dynfile = {
             .size          = dynamicFileSz,
             .cov           = {0xff, 0xff, 0xff, 0xff},

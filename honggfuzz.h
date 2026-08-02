@@ -329,6 +329,11 @@ typedef struct {
          * "accepted by the feedback loop" total would count each import twice. */
         size_t      covDirNewImportEnqueued;
         size_t      covDirNewImportRefound;
+        /* The remaining two outcomes for an accepted input, so the reported total is
+         * an identity rather than an approximation: content-addressed names mean a
+         * re-accepted input is already on disk, and a write can fail. */
+        size_t      covDirNewDuplicate;
+        size_t      covDirNewWriteFailed;
         bool        saveUnique;
         bool        saveSmaller;
         size_t      dynfileqMaxSz;
@@ -557,6 +562,12 @@ typedef struct {
      * the only record that we did not find this input ourselves.  Carried here so the
      * covDirNew export decision can still see it. */
     bool         dynfileFromImport;
+    /* The bytes we were handed, when dynfileFromImport is set.  A custom mutator in
+     * the persistent child rewrites the shared input in place, so "came from an
+     * import" does not mean "still is the import" -- a mutated descendant that finds
+     * coverage is our discovery and must be exported.  Compared at add time. */
+    uint64_t     dynfileImportCrc;
+    size_t       dynfileImportSz;
     uint32_t     fuzzNo;
     int          persistentSock;
     runState_t   runState;

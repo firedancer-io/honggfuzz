@@ -359,16 +359,15 @@ static void input_generateFileName(dynfile_t* dynfile, const char* dir, char fna
     }
 }
 
-bool input_writeCovFile(const char* dir, dynfile_t* dynfile) {
-    char fname[PATH_MAX];
-    input_generateFileName(dynfile, dir, fname);
-
+/* Write `dynfile` to an already-generated path.  Split out so callers that need the
+ * name for something else do not pay input_generateFileName's two CRC64 passes twice. */
+static bool input_writeCovFileAs(const char* fname, dynfile_t* dynfile) {
     if (files_exists(fname)) {
-        LOG_D("File '%s' already exists in the output corpus directory '%s'", fname, dir);
+        LOG_D("File '%s' already exists in the output corpus directory", fname);
         return true;
     }
 
-    LOG_D("Adding file '%s' to the corpus directory '%s'", fname, dir);
+    LOG_D("Adding file '%s' to the corpus directory", fname);
 
     /* Use atomic write to ensure corpus files appear fully formed for external observers
      * (e.g., Octane's async corpus sync which may read files while fuzzer is running) */
@@ -378,6 +377,12 @@ bool input_writeCovFile(const char* dir, dynfile_t* dynfile) {
     }
 
     return true;
+}
+
+bool input_writeCovFile(const char* dir, dynfile_t* dynfile) {
+    char fname[PATH_MAX];
+    input_generateFileName(dynfile, dir, fname);
+    return input_writeCovFileAs(fname, dynfile);
 }
 
 /* true if item1 is bigger than item2 */
@@ -485,6 +490,12 @@ void input_addDynamicInput(run_t* run) {
 
     ATOMIC_POST_INC(run->global->io.newUnitsAdded);
 
+    /* Everything below is a --covdir_new decision, including the counters, so there is
+     * nothing to decide or count without one. */
+    if (!run->global->io.covDirNew) {
+        return;
+    }
+
     /* An imported input (--dynamic_input) is one another host already found and Octane
      * handed to us.  It is not a discovery of this run, and covDirNew is consumed as a
      * discovery stream, so it must never be re-exported.
@@ -520,24 +531,24 @@ void input_addDynamicInput(run_t* run) {
         return;
     }
 
-    if (!run->global->io.covDirNew) {
-        return;
-    }
-
     /* Names are content-addressed, so an input the loop accepts twice -- two threads
-     * finding it, or a re-add -- maps to a file that is already there.
-     * input_writeCovFile reports success for that case, so ask first: counting it would
-     * overstate what the directory holds, and a second coverage_data.bin entry under
-     * the same name would inflate its file_count.  (Two threads can still race past
-     * this; the write is atomic and the bytes are identical, so the cost is at worst
-     * one double count, not a corrupt file.) */
+     * finding it, or a re-add -- maps to a file that is already there.  Writing reports
+     * success for that case, so ask first: counting it would overstate what the
+     * directory holds, and a second coverage_data.bin entry under the same name would
+     * inflate its file_count.  (Two threads can still race past this; the write is
+     * atomic and the bytes are identical, so the cost is at worst one double count, not
+     * a corrupt file.)
+     *
+     * The name is generated here and then reused for both the write and the guard
+     * entry -- it is two CRC64 passes over the whole input, so it is worth not doing
+     * three times. */
     char fname[PATH_MAX];
     input_generateFileName(dynfile, run->global->io.covDirNew, fname);
     if (files_exists(fname)) {
         return;
     }
 
-    if (!input_writeCovFile(run->global->io.covDirNew, dynfile)) {
+    if (!input_writeCovFileAs(fname, dynfile)) {
         LOG_E("Couldn't save the new coverage data to '%s'", run->global->io.covDirNew);
         return;
     }

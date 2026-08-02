@@ -1012,10 +1012,14 @@ static void* fuzz_threadNew(void* arg) {
     }
     run.perThreadCovFeedbackMap = NULL;
     /* Needed in both modes now: replay reads it per corpus file, fuzzing reads it for
-     * each input exported to --covdir_new.  The child clears it at the top of every
-     * HonggfuzzRunOneInput (instrumentResetLocalCovFeedback), so it holds the guards of
-     * the input just executed regardless of mode. */
-    if (run.global->io.covDirNew) {
+     * each input exported to --covdir_new.  The persistent child clears it at the top
+     * of every HonggfuzzRunOneInput (instrumentResetLocalCovFeedback), so it holds the
+     * guards of the input just executed.
+     *
+     * Same condition as the coverage_data.bin fd in fuzz_threadsStart, so a target that
+     * cannot produce per-input guards does not map _HF_PC_GUARD_MAX (128 MiB) per
+     * thread to never read it. */
+    if (run.global->io.covDirNew && (run.global->cfg.replay || run.global->exe.persistent)) {
         _Static_assert(
             offsetof(feedback_t, pcGuardMap) == 0, "mmap at offset 0 assumes pcGuardMap is first");
         int mflags = files_getTmpMapFlags(MAP_SHARED, /* nocore= */ true);

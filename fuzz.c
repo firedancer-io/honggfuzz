@@ -1171,10 +1171,20 @@ void fuzz_threadsStart(honggfuzz_t* hfuzz) {
         if (hfuzz->cfg.replay || hfuzz->exe.persistent) {
             fuzz_coverageDataInit(hfuzz);
         } else {
-            LOG_W("--covdir_new: not recording coverage_data.bin -- per-input guard "
-                  "attribution needs persistent mode, and this target is not persistent "
-                  "(the per-thread guard map is never reset, so every entry would "
-                  "report the worker's accumulated coverage rather than the input's)");
+            /* Reachable in practice only for targets built without hfuzz-cc: linking
+             * libhfuzz embeds _HF_PERSISTENT_SIG, so anything instrumented the normal
+             * way is detected as persistent above.  Such a target registers no guards,
+             * so there would be nothing to record anyway.
+             *
+             * A target instrumented some other way and genuinely not persistent could
+             * in principle be supported now -- initializeLocalCovFeedback() clears the
+             * inherited map in every freshly exec'd child, and for one-exec-per-input
+             * that is per-input attribution.  Left out because it could not be
+             * exercised here to confirm it. */
+            LOG_W("--covdir_new: not recording coverage_data.bin -- this target is not "
+                  "persistent, so per-input guard attribution is not established for it "
+                  "(a target built with hfuzz-cc is always detected as persistent; one "
+                  "that is not is typically uninstrumented and has no guards to record)");
         }
     }
 

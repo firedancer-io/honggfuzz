@@ -212,7 +212,15 @@ static bool initializeLocalCovFeedback(void) {
      * so without this the first input of every new child is credited with the dead
      * child's guards.  Once per process, bounded by the guards registered so far
      * (zero on the very first child, whose map is freshly created and already clear). */
-    bzero(localCovFeedback->pcGuardMap, HF_MIN(instrumentReserveGuard(0), _HF_PC_GUARD_MAX));
+    /* Read guardNb straight from the shared struct.  NOT via instrumentReserveGuard(0):
+     * that calls hfuzzInstrumentInit(), which is what called us, and re-entering
+     * initialization leaves instrumentation half-built -- the target then registers no
+     * guards at all and every input times out. */
+    size_t registered = (size_t)atomic_load_explicit(
+        &globalCovFeedback->guardNb, memory_order_relaxed);
+    size_t clearSz = registered < (size_t)_HF_PC_GUARD_MAX ? registered
+                                                           : (size_t)_HF_PC_GUARD_MAX;
+    bzero(localCovFeedback->pcGuardMap, clearSz);
 
     return true;
 }

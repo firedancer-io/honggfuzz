@@ -1100,6 +1100,7 @@ static struct {
     uint8_t* start;
     size_t   cnt;
     size_t   guard;
+    bool     recordLocalCov;
 } hf8bitcounters[256] = {};
 
 void instrument8BitCountersCount(void) {
@@ -1137,6 +1138,19 @@ void instrument8BitCountersCount(void) {
 
             const uint8_t newval = instrumentCntMap[v];
             const size_t  guard  = hf8bitcounters[i].guard + j;
+
+            if (hf8bitcounters[i].recordLocalCov) {
+                if (!ATOMIC_GET(localCovFeedback->pcGuardMap[guard]) &&
+                    !ATOMIC_GET(localGuardTouchedOverflow)) {
+                    uint32_t idx = ATOMIC_POST_INC(localGuardTouchedCnt);
+                    if (idx < ARRAYSIZE(localGuardTouched)) {
+                        localGuardTouched[idx] = (uint32_t)guard;
+                    } else {
+                        ATOMIC_SET(localGuardTouchedOverflow, true);
+                    }
+                }
+                ATOMIC_SET(localCovFeedback->pcGuardMap[guard], v);
+            }
 
             /* New hits */
             if (ATOMIC_GET(globalCovFeedback->pcGuardMap[guard]) < newval) {
@@ -1205,6 +1219,8 @@ void __sanitizer_cov_8bit_counters_init(char* start, char* end) {
     }
     /* Use different hash space for 8-bit counters vs PC guards to avoid collisions */
     uint64_t pathHash = util_hash(libName, strlen(libName)) ^ 0x8B178B178B178B17ULL;
+    bool     pcGuardsRegistered =
+        findTrackedModule(pathHash ^ 0x8B178B178B178B17ULL, (uint32_t)counterCount) != NULL;
 
     /* Quick optimistic check without lock (common case: already registered) */
     trackedModule_t* existing = findTrackedModule(pathHash, (uint32_t)counterCount);
@@ -1215,6 +1231,7 @@ void __sanitizer_cov_8bit_counters_init(char* start, char* end) {
                 hf8bitcounters[i].start = (uint8_t*)start;
                 hf8bitcounters[i].cnt   = counterCount;
                 hf8bitcounters[i].guard = existing->baseGuard;
+                hf8bitcounters[i].recordLocalCov = !pcGuardsRegistered;
                 LOG_D("Reusing 8-bit guards for module %s: base=%u count=%u", libName,
                     existing->baseGuard, existing->guardCount);
                 break;
@@ -1234,6 +1251,7 @@ void __sanitizer_cov_8bit_counters_init(char* start, char* end) {
                 hf8bitcounters[i].start = (uint8_t*)start;
                 hf8bitcounters[i].cnt   = counterCount;
                 hf8bitcounters[i].guard = existing->baseGuard;
+                hf8bitcounters[i].recordLocalCov = !pcGuardsRegistered;
                 break;
             }
         }
@@ -1259,6 +1277,7 @@ void __sanitizer_cov_8bit_counters_init(char* start, char* end) {
             hf8bitcounters[i].start = (uint8_t*)start;
             hf8bitcounters[i].cnt   = counterCount;
             hf8bitcounters[i].guard = instrumentReserveGuard(counterCount);
+            hf8bitcounters[i].recordLocalCov = !pcGuardsRegistered;
             baseGuard = hf8bitcounters[i].guard;
             foundSlot = true;
             break;
@@ -1282,6 +1301,9 @@ void __sanitizer_cov_8bit_counters_init(char* start, char* end) {
 
         LOG_I("8-bit module registration: %p-%p (count:%zu) at guard %zu in slot %u",
             start, end, counterCount, baseGuard, slot);
+        if (!pcGuardsRegistered) {
+            hfuzz_metrics_register_module(libName, (uint32_t)baseGuard, (uint32_t)counterCount);
+        }
     } else {
         moduleSpinlockRelease();
         LOG_F("No free tracking slots for 8-bit module %s (all %u slots in use). "
@@ -1331,19 +1353,14 @@ void __sanitizer_cov_pcs_init(const uintptr_t* pcs_beg, const uintptr_t* pcs_end
 
     /* Find the matching module registration to get the guard_start.
      * The PC count should match the guard count for the module. */
-    uint32_t guard_start = 0;
     uint64_t pathHash = util_hash(libName, strlen(libName));
 
     /* Search for a module with matching path hash and guard count */
-    uint32_t moduleCount = atomic_load_explicit(
-        &globalCovFeedback->trackedModuleCount, memory_order_acquire);
-    for (uint32_t i = 0; i < moduleCount && i < _HF_MAX_TRACKED_MODULES; i++) {
-        if (globalCovFeedback->trackedModules[i].pathHash == pathHash &&
-            globalCovFeedback->trackedModules[i].guardCount == (uint32_t)pc_count) {
-            guard_start = globalCovFeedback->trackedModules[i].baseGuard;
-            break;
-        }
+    trackedModule_t* mod = findTrackedModule(pathHash, (uint32_t)pc_count);
+    if (!mod) {
+        mod = findTrackedModule(pathHash ^ 0x8B178B178B178B17ULL, (uint32_t)pc_count);
     }
+    uint32_t guard_start = mod ? mod->baseGuard : 0;
 
     LOG_D("PC table init: %s with %zu PCs at guard_start=%u", libName, pc_count, guard_start);
 

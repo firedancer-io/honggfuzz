@@ -87,6 +87,17 @@ endif
 
 METRICS_OBJS += $(COVERAGE_JSON_OBJ)
 
+LLVM_CONFIG ?= llvm-config
+SANCOV_PLUGIN_SO := hfuzz_cc/libhfsancov.so
+SANCOV_PLUGIN_SRCS := instrumentation/SanitizerCoverage.cpp
+ifneq ($(shell $(LLVM_CONFIG) --version 2>/dev/null),)
+    SANCOV_PLUGIN := $(SANCOV_PLUGIN_SO)
+    SANCOV_PLUGIN_CFLAGS := -D_HFUZZ_SANCOV_PLUGIN=1
+    SANCOV_PLUGIN_CXXFLAGS := $(shell $(LLVM_CONFIG) --cxxflags) -O2 -fPIC -fno-rtti -I.
+else
+    $(info Honggfuzz: '$(LLVM_CONFIG)' not found; hfuzz-cc will fall back to clang's stock SanitizerCoverage)
+endif
+
 REALOS = $(shell uname -s)
 OS ?= $(shell uname -s)
 MARCH ?= $(shell uname -m)
@@ -332,9 +343,9 @@ CLEAN_TARGETS := core Makefile.bak \
   $(LCOMMON_ARCH) $(LCOMMON_OBJS) \
   $(LNETDRIVER_ARCH) $(LNETDRIVER_OBJS) \
   $(MAC_GARGBAGE) $(ANDROID_GARBAGE) $(SUBDIR_GARBAGE) \
-  $(GIT_BUILDINFO_H) $(NOBUILTIN_H)
+  $(GIT_BUILDINFO_H) $(NOBUILTIN_H) $(SANCOV_PLUGIN_SO)
 
-all: $(GIT_BUILDINFO_H) $(NOBUILTIN_H) $(BIN) $(HFUZZ_CC_BIN) $(LHFUZZ_ARCH) $(LHFUZZ_SHARED) $(LCOMMON_ARCH) $(LNETDRIVER_ARCH)
+all: $(GIT_BUILDINFO_H) $(NOBUILTIN_H) $(BIN) $(HFUZZ_CC_BIN) $(LHFUZZ_ARCH) $(LHFUZZ_SHARED) $(LCOMMON_ARCH) $(LNETDRIVER_ARCH) $(SANCOV_PLUGIN)
 
 # Generate git build info header with commit hash, author, and title
 .PHONY: $(GIT_BUILDINFO_H)
@@ -401,8 +412,11 @@ mac/arch.o: mac/arch.c mac/mach_exc.h mac/mach_excServer.h
 $(BIN): $(OBJS) $(LCOMMON_ARCH) $(METRICS_OBJS)
 	$(LD) -o $(BIN) $(OBJS) $(METRICS_OBJS) $(LCOMMON_ARCH) $(LDFLAGS) $(HONGGFUZZ_LDFLAGS)
 
-$(HFUZZ_CC_BIN): $(LCOMMON_ARCH) $(LHFUZZ_ARCH) $(LNETDRIVER_ARCH) $(HFUZZ_CC_SRCS) $(NOBUILTIN_H)
-	$(LD) -o $@ $(HFUZZ_CC_SRCS) $(LCOMMON_ARCH) $(LDFLAGS) $(CFLAGS) $(CFLAGS_BLOCKS) -D_HFUZZ_INC_PATH=$(HFUZZ_INC)
+$(SANCOV_PLUGIN): $(SANCOV_PLUGIN_SRCS)
+	$(CXX) $(SANCOV_PLUGIN_CXXFLAGS) -shared -o $@ $(SANCOV_PLUGIN_SRCS)
+
+$(HFUZZ_CC_BIN): $(LCOMMON_ARCH) $(LHFUZZ_ARCH) $(LNETDRIVER_ARCH) $(HFUZZ_CC_SRCS) $(NOBUILTIN_H) $(SANCOV_PLUGIN)
+	$(LD) -o $@ $(HFUZZ_CC_SRCS) $(LCOMMON_ARCH) $(LDFLAGS) $(CFLAGS) $(CFLAGS_BLOCKS) $(SANCOV_PLUGIN_CFLAGS) -D_HFUZZ_INC_PATH=$(HFUZZ_INC)
 
 $(LCOMMON_OBJS): $(LCOMMON_SRCS)
 	$(CC) -c $(CFLAGS) $(LIBS_CFLAGS) -o $@ $(@:.o=.c)

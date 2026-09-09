@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc g++ make pkg-config libunwind-dev binutils-dev python3
+          sudo apt-get install -y gcc g++ make pkg-config libunwind-dev binutils-dev python3 clang llvm-dev
 
       - name: Build honggfuzz
         run: make -j$(nproc)
@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc g++ make pkg-config libunwind-dev binutils-dev python3
+          sudo apt-get install -y gcc g++ make pkg-config libunwind-dev binutils-dev python3 clang llvm-dev
 
       - name: Build honggfuzz
         run: make -j$(nproc)

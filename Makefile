@@ -357,8 +357,8 @@ $(GIT_BUILDINFO_H):
 	@echo "" >> $@
 	@GIT_HASH=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown"); \
 	 GIT_BRANCH=$$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); \
-	 GIT_AUTHOR=$$(git log -1 --format='%an' 2>/dev/null || echo "unknown"); \
-	 GIT_TITLE=$$(git log -1 --format='%s' 2>/dev/null | sed 's/"/\\"/g' || echo "unknown"); \
+	 GIT_AUTHOR=$$(git log -1 --format='%an' 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g' || echo "unknown"); \
+	 GIT_TITLE=$$(git log -1 --format='%s' 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g' || echo "unknown"); \
 	 echo "#define GIT_COMMIT_HASH \"$$GIT_HASH\"" >> $@; \
 	 echo "#define GIT_COMMIT_BRANCH \"$$GIT_BRANCH\"" >> $@; \
 	 echo "#define GIT_COMMIT_AUTHOR \"$$GIT_AUTHOR\"" >> $@; \

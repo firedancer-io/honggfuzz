@@ -56,7 +56,16 @@ __asm__("\n"
         "lhfcommon_start:\n"
         "   .incbin \"libhfcommon/libhfcommon.a\"\n"
         "lhfcommon_end:\n"
-        "\n");
+        "\n"
+#if defined(_HFUZZ_SANCOV_PLUGIN)
+        "   .global lhfsancov_start\n"
+        "   .global lhfsancov_end\n"
+        "lhfsancov_start:\n"
+        "   .incbin \"hfuzz_cc/libhfsancov.so\"\n"
+        "lhfsancov_end:\n"
+        "\n"
+#endif /* defined(_HFUZZ_SANCOV_PLUGIN) */
+);
 
 static const char* _basename(const char* path) {
     static __thread char fname[PATH_MAX];
@@ -415,6 +424,31 @@ static char* getLibHFCommonPath() {
     return path;
 }
 
+// to use our own modified sancov pass. we need to pass to clang "-fpass-plugin=<path to that sancov pass>"
+// basically this pass just checks if we've compiled it or not and pass that flag
+static const char* sancovPluginFlag(void) {
+    const char* mode = getenv("HFUZZ_SANCOV_PLUGIN");
+    if (mode && strcmp(mode, "0") == 0) {
+        return NULL;
+    }
+#if defined(_HFUZZ_SANCOV_PLUGIN)
+    extern uint8_t lhfsancov_start __asm__("lhfsancov_start");
+    extern uint8_t lhfsancov_end __asm__("lhfsancov_end");
+
+    static char path[PATH_MAX] = {};
+    static char flag[PATH_MAX + 32];
+    if (!path[0] &&
+        !getLibPath("libhfsancov", "HFUZZ_LHFSANCOV_PATH", &lhfsancov_start, &lhfsancov_end, path)) {
+        LOG_F("Couldn't create the temporary libhfsancov.so");
+    }
+    snprintf(flag, sizeof(flag), "-fpass-plugin=%s", path);
+    return flag;
+#else  /* defined(_HFUZZ_SANCOV_PLUGIN) */
+    LOG_W("hfuzz-cc was built without libhfsancov.so, using clang's stock SanitizerCoverage");
+    return NULL;
+#endif /* defined(_HFUZZ_SANCOV_PLUGIN) */
+}
+
 /*
  * The functions libhfuzz/memorycmp.c wraps, as -fno-builtin-<fn> flags.
  * Generated from memorycmp.c at build time, so a wrapper added there is
@@ -502,11 +536,22 @@ static void commonPostOpts(int* j, char** args) {
             args[(*j)++] = "-fsanitize-coverage=trace-pc-guard,inline-8bit-counters,pc-table,"
                            "trace-cmp,trace-div,indirect-calls,trace-gep";
         } else {
-            args[(*j)++] = "-fno-sanitize-coverage=trace-pc-guard";
-            args[(*j)++] = "-fno-sanitize=fuzzer";
-            args[(*j)++] = "-fsanitize=fuzzer-no-link";
-            args[(*j)++] =
-                "-fsanitize-coverage=trace-cmp,trace-div,indirect-calls,trace-gep";
+            const char* plugin = sancovPluginFlag();
+            if (plugin) { // at this point we can use our own modified sancov pass
+                if (hasCmdLineFSanitizeFuzzer) {
+                    args[(*j)++] = "-fno-sanitize=fuzzer";
+                    args[(*j)++] = "-fno-sanitize=fuzzer-no-link";
+                }
+                args[(*j)++] = "-fno-sanitize-coverage=func,bb,edge,trace-pc,trace-pc-guard,inline-8bit-counters,inline-bool-flag,stack-depth,control-flow"; // don't put pcguard and counters 
+                args[(*j)++] = "-fsanitize-coverage=pc-table,trace-cmp,trace-div,indirect-calls,trace-gep";
+                args[(*j)++] = (char*)plugin; // and .. we put our pass here
+            } else {
+                args[(*j)++] = "-fno-sanitize-coverage=trace-pc-guard";
+                args[(*j)++] = "-fno-sanitize=fuzzer";
+                args[(*j)++] = "-fsanitize=fuzzer-no-link";
+                args[(*j)++] =
+                    "-fsanitize-coverage=trace-cmp,trace-div,indirect-calls,trace-gep";
+            }
         }
     }
 }

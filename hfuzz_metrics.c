@@ -19,6 +19,7 @@
 /* Function pointer types */
 typedef void (*session_init_fn)(const char*, int, char**);
 typedef void (*session_end_fn)(const char*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+typedef void (*terminal_stats_fn)(const hfuzz_terminal_stats_t*, const char*);
 typedef void (*log_execution_fn)(size_t, uint64_t);
 typedef void (*log_crash_fn)(const char*, uint64_t, size_t);
 typedef void (*log_hang_fn)(size_t, uint64_t);
@@ -53,6 +54,7 @@ typedef void (*log_stats_fn)(
 /* Resolved function pointers */
 static session_init_fn         fn_session_init = NULL;
 static session_end_fn          fn_session_end = NULL;
+static terminal_stats_fn       fn_terminal_stats = NULL;
 static log_execution_fn        fn_log_execution = NULL;
 static log_crash_fn            fn_log_crash = NULL;
 static log_hang_fn             fn_log_hang = NULL;
@@ -86,6 +88,7 @@ static void resolve_metrics_functions(void) {
     /* Look for the bridge library's implementations */
     fn_session_init = (session_init_fn)dlsym(RTLD_DEFAULT, "hfuzz_metrics_bridge_session_init");
     fn_session_end = (session_end_fn)dlsym(RTLD_DEFAULT, "hfuzz_metrics_bridge_session_end");
+    fn_terminal_stats = (terminal_stats_fn)dlsym(RTLD_DEFAULT, "hfuzz_metrics_bridge_log_terminal_stats");
     fn_log_execution = (log_execution_fn)dlsym(RTLD_DEFAULT, "hfuzz_metrics_bridge_log_execution");
     fn_log_crash = (log_crash_fn)dlsym(RTLD_DEFAULT, "hfuzz_metrics_bridge_log_crash");
     fn_log_hang = (log_hang_fn)dlsym(RTLD_DEFAULT, "hfuzz_metrics_bridge_log_hang");
@@ -103,6 +106,10 @@ static void resolve_metrics_functions(void) {
         if (!fn_log_stats) {
             fprintf(stderr, "[hfuzz_metrics] WARNING: fn_log_stats not resolved -- "
                     "execution_events will NOT be written to ClickHouse\n");
+        }
+        if (!fn_terminal_stats) {
+            fprintf(stderr, "[hfuzz_metrics] WARNING: terminal stats bridge not resolved -- "
+                    "final execution and coverage counters are unmeasured; rebuild the metrics bridge\n");
         }
     } else {
         /* Check if the bridge library was loaded but symbols not found */
@@ -130,6 +137,10 @@ void hfuzz_metrics_session_end(const char* status,
                                 uint64_t cpu_seconds,
                                 uint64_t memory_peak_mb) {
     if (fn_session_end) fn_session_end(status, executions, crashes, hangs, cpu_seconds, memory_peak_mb);
+}
+
+void hfuzz_metrics_log_terminal_stats(const hfuzz_terminal_stats_t* stats, const char* state) {
+    if (fn_terminal_stats) fn_terminal_stats(stats, state);
 }
 
 void hfuzz_metrics_log_execution(size_t input_size, uint64_t exec_time_us) {

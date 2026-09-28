@@ -878,6 +878,26 @@ int main(int argc, char** argv) {
 
         const char* status = (hfuzz.cfg.exitUponCrash && ATOMIC_GET(hfuzz.cnts.crashesCnt) > 0)
                              ? "crashed" : "completed";
+        const hfuzz_terminal_stats_t terminal = {
+            .executions = ATOMIC_GET(hfuzz.cnts.mutationsCnt),
+            .crashes = ATOMIC_GET(hfuzz.cnts.crashesCnt),
+            .hangs = ATOMIC_GET(hfuzz.cnts.timeoutedCnt),
+            .coverage_pcs = ATOMIC_GET(hfuzz.feedback.hwCnts.softCntPc),
+            .coverage_edges = ATOMIC_GET(hfuzz.feedback.hwCnts.softCntEdge),
+            .coverage_cmp = ATOMIC_GET(hfuzz.feedback.hwCnts.softCntCmp),
+            .coverage_edge_bucket = ATOMIC_GET(hfuzz.feedback.hwCnts.softCntEdgeBucket),
+            .corpus_count = ATOMIC_GET(hfuzz.io.dynfileqCnt),
+        };
+        const char* final_state = "unknown_final";
+        switch (fuzz_getState(&hfuzz)) {
+            case _HF_STATE_DYNAMIC_MAIN: final_state = "dynamic_final"; break;
+            case _HF_STATE_DYNAMIC_DRY_RUN: final_state = "dry_run_final"; break;
+            case _HF_STATE_DYNAMIC_MINIMIZE: final_state = "minimize_final"; break;
+            case _HF_STATE_STATIC: final_state = "static_final"; break;
+            case _HF_STATE_REPLAY: final_state = "replay_final"; break;
+            case _HF_STATE_UNSET: break;
+        }
+        hfuzz_metrics_log_terminal_stats(&terminal, final_state);
         hfuzz_metrics_session_end(status,
                                    hfuzz.cnts.mutationsCnt,
                                    hfuzz.cnts.crashesCnt,

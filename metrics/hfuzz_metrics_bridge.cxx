@@ -980,6 +980,15 @@ void hfuzz_metrics_bridge_session_init(const char* target_name,
     }
 }
 
+void hfuzz_metrics_bridge_log_terminal_stats(const hfuzz_terminal_stats_t* stats, const char* state) {
+    if (!s_session_initialized.load() || !stats || !state) return;
+    try {
+        sol_compat::MetricsLogger::instance().log_terminal_stats(*stats, state);
+    } catch (const std::exception& e) {
+        std::cerr << "[hfuzz_metrics_bridge] Error logging terminal stats: " << e.what() << std::endl;
+    }
+}
+
 /*
  * Finalize metrics session at fuzzer shutdown.
  * Called from honggfuzz main() after mainThreadLoop() returns.

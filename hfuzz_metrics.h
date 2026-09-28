@@ -36,6 +36,15 @@ void hfuzz_metrics_session_end(const char* status,
                                 uint64_t cpu_seconds,
                                 uint64_t memory_peak_mb);
 
+/* Final counters after all fuzzing threads have stopped, independent of the periodic stats interval. */
+typedef struct {
+    uint64_t executions, crashes, hangs;
+    uint64_t coverage_pcs, coverage_edges, coverage_cmp, coverage_edge_bucket;
+    uint64_t corpus_count;
+} hfuzz_terminal_stats_t;
+
+void hfuzz_metrics_log_terminal_stats(const hfuzz_terminal_stats_t* stats, const char* state);
+
 /*
  * Log a single execution completion.
  * Called from fuzz_fuzzLoop() after each execution.

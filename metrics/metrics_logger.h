@@ -45,6 +45,8 @@ public:
         const std::string& task_type);
     
     void log_session_start();
+
+    void log_terminal_stats(const hfuzz_terminal_stats_t& stats, const std::string& state);
     
     void log_session_end(
         const std::string& status,
@@ -286,6 +288,8 @@ protected:
 
     // execs_delta tracking (previous total_executions for delta computation)
     std::atomic<uint64_t> prev_total_executions_{0};
+    hfuzz_terminal_stats_t terminal_stats_{};
+    bool terminal_stats_measured_ = false;
 
     // Shutdown status
     std::atomic<bool> m_shutting_down{false};

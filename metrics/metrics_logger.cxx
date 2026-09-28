@@ -1031,6 +1031,8 @@ void MetricsLogger::init(
 #endif
 
     session_id_ = session_id;
+    terminal_stats_measured_ = false;
+    prev_total_executions_.store(0);
     user_name_ = user_name;
     host_name_ = host_name;
     fuzzer_name_ = fuzzer_name;
@@ -1160,7 +1162,7 @@ void MetricsLogger::log_session_end(
 #endif
 
     log_session_event("end", status, total_executions, total_crashes, total_hangs,
-                      cpu_hours, memory_peak_mb, corpus_size);
+                      cpu_hours, memory_peak_mb, terminal_stats_measured_ ? terminal_stats_.corpus_count : corpus_size);
 }
 
 void MetricsLogger::log_session_event(
@@ -1173,8 +1175,9 @@ void MetricsLogger::log_session_event(
     uint64_t memory_peak_mb,
     uint64_t corpus_size)
 {
-    uint32_t num_coverage_lines = 0;
-    uint32_t num_coverage_branches = 0;
+    const bool terminal = event_type == "end" && terminal_stats_measured_;
+    uint32_t num_coverage_lines = terminal ? static_cast<uint32_t>(terminal_stats_.coverage_pcs) : 0;
+    uint32_t num_coverage_branches = terminal ? static_cast<uint32_t>(terminal_stats_.coverage_edges) : 0;
     uint32_t num_coverage_functions = 0;
     if (vector_enabled_.load()) {
         JsonBuilder jb;
@@ -1219,6 +1222,51 @@ void MetricsLogger::log_session_event(
     std::string event_desc = "session " + event_type + " event";
 
     enqueue_insert_("session_events", &b, event_desc);
+#endif
+}
+
+void MetricsLogger::log_terminal_stats(const hfuzz_terminal_stats_t& stats, const std::string& state) {
+    terminal_stats_ = stats;
+    terminal_stats_measured_ = true;
+    const uint64_t previous = prev_total_executions_.exchange(stats.executions);
+    const uint64_t delta = stats.executions >= previous ? stats.executions - previous : 0;
+    if (vector_enabled_.load()) {
+        const char* enabled = std::getenv("SOLFUZZ_EXECUTION_EVENTS_ENABLE");
+        if (enabled && std::string(enabled) == "1") {
+            JsonBuilder jb;
+            add_common_fields_(jb);
+            jb.add_timestamp("event_time", now_epoch_ms());
+            jb.add("fuzzer_state", state);
+            jb.add("total_executions", stats.executions);
+            jb.add("execs_delta", delta);
+            jb.add("total_crashes", stats.crashes);
+            jb.add("total_hangs", stats.hangs);
+            jb.add("num_coverage_lines", static_cast<uint32_t>(stats.coverage_pcs));
+            jb.add("num_coverage_branches", static_cast<uint32_t>(stats.coverage_edges));
+            jb.add("coverage_cmp", stats.coverage_cmp);
+            jb.add("coverage_edge_bucket", stats.coverage_edge_bucket);
+            jb.add("corpus_size", stats.corpus_count);
+            jb.add("corpus_count", stats.corpus_count);
+            emit_jsonl_("execution_events", jb);
+        }
+    }
+#ifdef SOLFUZZ_CLICKHOUSE_ENABLED
+    if (!ch_.enabled || !m_tables_initialized.load()) return;
+    clickhouse::Block b;
+    append_common_columns_to_block_(&b);
+    APPEND_DATETIME64_COLUMN(b, "event_time", now_epoch_ms_(), 3);
+    APPEND_STRING_COLUMN(b, "fuzzer_state", state);
+    APPEND_UINT64_COLUMN(b, "total_executions", stats.executions);
+    APPEND_UINT64_COLUMN(b, "execs_delta", delta);
+    APPEND_UINT64_COLUMN(b, "total_crashes", stats.crashes);
+    APPEND_UINT64_COLUMN(b, "total_hangs", stats.hangs);
+    APPEND_UINT32_COLUMN(b, "num_coverage_lines", static_cast<uint32_t>(stats.coverage_pcs));
+    APPEND_UINT32_COLUMN(b, "num_coverage_branches", static_cast<uint32_t>(stats.coverage_edges));
+    APPEND_UINT64_COLUMN(b, "coverage_cmp", stats.coverage_cmp);
+    APPEND_UINT64_COLUMN(b, "coverage_edge_bucket", stats.coverage_edge_bucket);
+    APPEND_UINT64_COLUMN(b, "corpus_size", stats.corpus_count);
+    APPEND_UINT64_COLUMN(b, "corpus_count", stats.corpus_count);
+    enqueue_insert_("execution_events", &b, "terminal stats");
 #endif
 }
 
@@ -1733,8 +1781,8 @@ void MetricsLogger::log_mutation_health(
     APPEND_UINT64_COLUMN(b, "encode_overflow_cnt", encode_overflow_cnt);
     APPEND_UINT64_COLUMN(b, "no_candidates_cnt", no_candidates_cnt);
     for (uint32_t k = 0; k < kind_num; k++) {
-        std::string col = sanitize_kind_col(kind_names[k]);
-        APPEND_UINT64_COLUMN(b, col.c_str(), kind_counts[k]);
+        std::string kind_column = sanitize_kind_col(kind_names[k]);
+        APPEND_UINT64_COLUMN(b, kind_column.c_str(), kind_counts[k]);
     }
     APPEND_UINT64_COLUMN(b, "elf_fixup_ok_cnt", elf_fixup_ok_cnt);
     APPEND_UINT64_COLUMN(b, "exec_fail_cnt", exec_fail_cnt);

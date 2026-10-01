@@ -8,6 +8,15 @@ on:
 permissions:
   contents: read
 
+# The sancov plugin needs the LLVM version production builds with.
+# Noble's llvm-dev is 18, which lacks the APIs the plugin uses.
+# The apt.llvm.org key fingerprint is published at https://apt.llvm.org.
+env:
+  LLVM_VERSION: 21
+  LLVM_CONFIG: llvm-config-21
+  HFUZZ_CC_PATH: clang-21
+  LLVM_APT_KEY_FPR: 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,8 +27,13 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo install -d /etc/apt/keyrings
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc >/dev/null
+          gpg --show-keys --with-colons /etc/apt/keyrings/apt.llvm.org.asc | grep -q "^fpr:::::::::$LLVM_APT_KEY_FPR:"
+          codename=$(lsb_release -cs)
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM_VERSION main" | sudo tee /etc/apt/sources.list.d/apt.llvm.org.list
           sudo apt-get update
-          sudo apt-get install -y gcc g++ make pkg-config libunwind-dev binutils-dev python3 clang llvm-dev
+          sudo apt-get install -y gcc g++ make pkg-config libunwind-dev binutils-dev python3 clang-$LLVM_VERSION llvm-$LLVM_VERSION-dev
 
       - name: Build honggfuzz
         run: make -j$(nproc)
@@ -38,8 +52,13 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo install -d /etc/apt/keyrings
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc >/dev/null
+          gpg --show-keys --with-colons /etc/apt/keyrings/apt.llvm.org.asc | grep -q "^fpr:::::::::$LLVM_APT_KEY_FPR:"
+          codename=$(lsb_release -cs)
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM_VERSION main" | sudo tee /etc/apt/sources.list.d/apt.llvm.org.list
           sudo apt-get update
-          sudo apt-get install -y gcc g++ make pkg-config libunwind-dev binutils-dev python3 clang llvm-dev
+          sudo apt-get install -y gcc g++ make pkg-config libunwind-dev binutils-dev python3 clang-$LLVM_VERSION llvm-$LLVM_VERSION-dev
 
       - name: Build honggfuzz
         run: make -j$(nproc)

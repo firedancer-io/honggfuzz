@@ -359,8 +359,8 @@ static void HonggfuzzPersistentLoop(void) {
             uint8_t* shared_input = getInputBuf();
             if (shared_input && len > 0) {
                 size_t wb_len = len < mut_max ? len : mut_max;
-                memcpy(shared_input, hf_mut_buf, wb_len);
                 fetchSanPoison(shared_input, wb_len);
+                memcpy(shared_input, hf_mut_buf, wb_len);
                 ATOMIC_SET(globalCovFeedback->postMutInputLen[my_thread_no].val, wb_len);
             }
         }
@@ -386,8 +386,8 @@ static void HonggfuzzPersistentLoop(void) {
                     uint8_t* shared_input_xo = getInputBuf();
                     if (shared_input_xo) {
                         size_t wb_len = len < xo_max ? len : xo_max;
-                        memcpy(shared_input_xo, hf_mut_buf, wb_len);
                         fetchSanPoison(shared_input_xo, wb_len);
+                        memcpy(shared_input_xo, hf_mut_buf, wb_len);
                         ATOMIC_SET(globalCovFeedback->postMutInputLen[my_thread_no].val, wb_len);
                     }
                 }
